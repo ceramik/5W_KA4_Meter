@@ -54,6 +54,9 @@ export LD_LIBRARY_PATH=/vendor/lib:/system/lib
 PKG=hkg.taximeter
 APP=me.bamtol.ka4taximeter
 LOG=/data/local/tmp/taximeter-install.log
+for U in /storage/usb0 /mnt/media_rw/usb0 /storage/usb1 /mnt/usb0; do
+    if [ -d "$U" ] && grep " $U " /proc/mounts >/dev/null 2>&1 && [ -w "$U" ]; then LOG="$U/taximeter-install.log"; break; fi
+done
 find_apk() {
     APK=
     for D in /data/local/tmp/nemesis/stage/$PKG /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG; do
@@ -100,7 +103,7 @@ if [ -f /system/framework/hmgapi-hook.jar ] && [ -d /data/hmgapi ]; then
     if [ ! -s "$KEY" ]; then
         (umask 077; hmg hmgapi.engine.Signing keygen "$KEY") || { echo "HMG-API key generation failed; NEMESIS launcher remains available"; exit 0; }
     fi
-    STAGE=/data/local/tmp/hkg-taximeter-mod-$
+    STAGE=/data/local/tmp/hkg-taximeter-mod-$$
     umask 077
     mkdir -p "$STAGE"
     cp "$D/hmgapi_mod/"* "$STAGE/"
