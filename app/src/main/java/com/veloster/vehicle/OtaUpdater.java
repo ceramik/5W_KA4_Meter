@@ -6,7 +6,7 @@ import android.net.Uri;
 import android.os.*;
 import java.io.*;
 import java.net.*;
-import java.security.*;
+import java.security.MessageDigest;
 import org.json.*;
 
 final class OtaUpdater {
