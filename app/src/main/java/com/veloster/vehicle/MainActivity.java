@@ -33,6 +33,10 @@ public final class MainActivity extends Activity {
     public static final String SPEED_EXTRA="speed_kmh";
     private static final String[] REGIONS=MeterService.REGIONS;
     private MeterService meter;
+    private OtaUpdater ota;
+    private boolean foreground;
+    private long otaTick;
+    boolean otaSafe(){if(!foreground||meter==null||meter.running||isFinishing())return false;float v=meter.speed.speed(SystemClock.elapsedRealtime());return !Float.isNaN(v)&&v<=0.5f;}
     private boolean bound,permissionAsked;
     private MeterView view;
     private final Handler handler=new Handler();
@@ -41,22 +45,22 @@ public final class MainActivity extends Activity {
     private final Runnable updater=new Runnable(){public void run(){
         long now=SystemClock.elapsedRealtime();
         if(lastMusic<0||now-lastMusic>=1000){music=MusicMonitor.read(MainActivity.this);lastMusic=now;}
-        if(view!=null)view.invalidate();handler.postDelayed(this,80);
+        if(view!=null)view.invalidate();if(ota!=null&&now-otaTick>=10000){otaTick=now;ota.offer();if(getSharedPreferences("meter",0).getBoolean("ota_auto",true))ota.check(false);}handler.postDelayed(this,80);
     }};
     private final android.content.ServiceConnection connection=new android.content.ServiceConnection(){
         public void onServiceConnected(android.content.ComponentName n,android.os.IBinder b){meter=((MeterService.LocalBinder)b).service();requestGps();view.invalidate();}
         public void onServiceDisconnected(android.content.ComponentName n){meter=null;}
     };
-    @Override public void onCreate(Bundle b){super.onCreate(b);
+    @Override public void onCreate(Bundle b){super.onCreate(b);ota=new OtaUpdater(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN|WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);
         view=new MeterView();setContentView(view);
         Intent i=new Intent(this,MeterService.class);
         startService(i);bound=bindService(i,connection,Context.BIND_AUTO_CREATE);
     }
-    @Override protected void onResume(){super.onResume();requestGps();handler.removeCallbacks(updater);handler.post(updater);}
-    @Override protected void onPause(){handler.removeCallbacks(updater);super.onPause();}
-    @Override protected void onDestroy(){if(bound)unbindService(connection);super.onDestroy();}
+    @Override protected void onResume(){super.onResume();foreground=true;requestGps();handler.removeCallbacks(updater);handler.post(updater);}
+    @Override protected void onPause(){foreground=false;handler.removeCallbacks(updater);super.onPause();}
+    @Override protected void onDestroy(){if(ota!=null)ota.close();if(bound)unbindService(connection);super.onDestroy();}
     private void requestGps(){
         if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){if(!permissionAsked){permissionAsked=true;requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},11);}return;}
         if(meter!=null)meter.requestGps();
@@ -85,7 +89,7 @@ public final class MainActivity extends Activity {
     private void toll(){if(!meter.running){message("통행료","운행 중에만 추가할 수 있습니다.");return;}android.widget.EditText e=new android.widget.EditText(this);e.setInputType(2);new android.app.AlertDialog.Builder(this).setTitle("통행료 추가 / 현재 "+meter.toll+"원").setView(e).setPositiveButton("추가",(d,n)->{try{int t=Integer.parseInt(e.getText().toString());if(meter.running&&t>=0&&t<=1000000&&meter.toll<=1000000-t){meter.toll+=t;meter.saveActive();}}catch(Exception ignored){}}).setNegativeButton("취소",null).show();}
     private void exports(){new android.app.AlertDialog.Builder(this).setTitle("내보내기").setItems(new String[]{"운행 기록 CSV","마지막 영수증 QR"},(d,n)->{if(n==0){if(Build.VERSION.SDK_INT<19){message("CSV","Android 4.4 이상 파일 저장 지원");return;}Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("text/csv");i.putExtra(Intent.EXTRA_TITLE,"5W_trips.csv");try{startActivityForResult(i,61);}catch(Exception e){message("CSV","파일 저장 앱 없음");}}else if(meter.hasReceipt){try{String data="5W "+meter.receiptFare.tariff().region+" "+meter.receiptKm+" km / "+meter.receiptFare.total()+" KRW / toll "+meter.receiptToll;com.google.zxing.common.BitMatrix bits=new com.google.zxing.qrcode.QRCodeWriter().encode(data,com.google.zxing.BarcodeFormat.QR_CODE,300,300);android.graphics.Bitmap bmp=android.graphics.Bitmap.createBitmap(300,300,android.graphics.Bitmap.Config.RGB_565);for(int y=0;y<300;y++)for(int x=0;x<300;x++)bmp.setPixel(x,y,bits.get(x,y)?0xff000000:0xffffffff);android.widget.ImageView image=new android.widget.ImageView(this);image.setImageBitmap(bmp);new android.app.AlertDialog.Builder(this).setTitle("영수증 QR").setView(image).setPositiveButton("닫기",null).show();}catch(Exception e){message("QR","생성 실패");}}else message("QR","영수증 없음");}).show();}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==61&&result==RESULT_OK&&data!=null&&meter!=null){try(java.io.OutputStream out=getContentResolver().openOutputStream(data.getData())){meter.trips.csv(out);message("CSV","저장 완료");}catch(Exception e){message("CSV","저장 실패: "+e.getMessage());}}}
-    private void updates(){message("GitHub 업데이트","현재 버전 0.4.2. GitHub Actions 또는 Releases에서 APK를 내려받아 설치하세요. 고정 서명 키 및 자동 설치는 별도 구성 필요.");try{startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://github.com/ceramik/5W_KA4_Meter/releases")));}catch(Exception ignored){}}
+    private void updates(){boolean enabled=getSharedPreferences("meter",0).getBoolean("ota_auto",true);new android.app.AlertDialog.Builder(this).setTitle("GitHub OTA / 0.5.0").setItems(new String[]{"지금 확인","자동 확인: "+(enabled?"ON":"OFF")},(d,n)->{if(n==0)ota.check(true);else getSharedPreferences("meter",0).edit().putBoolean("ota_auto",!enabled).apply();}).show();}
 
     private final class MeterView extends View {
         private final Paint p=new Paint(3);
