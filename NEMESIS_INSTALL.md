@@ -6,3 +6,6 @@ The installer uses pm install -r, preserving Android app data when certificates 
 The APK is the same signed release APK when packaging an existing release. No re-signing. App OTA updates the Android APK, not the NEMESIS wrapper. No automatic UI launch at ignition and no changes to system partitions. Optional app boot service remains controlled by app settings. BCM access, installer behavior and launcher integration still require real Gen5W testing.
 
 USB descriptor and inner package metadata follow the public example in https://github.com/GRT47/HKG_5W_TurzxMonitor/blob/main/package_turzx_monitor/build_package.py and NEMESIS.data.
+
+## HMG-API launcher (0.5.4)
+The USB install attempts to register a launcher tile and optional star-key action using installed HMG-API >=1.0.0. Four 99px icons are packaged. The contribution references the existing Android activity without declaring APK ownership, so removing the contribution should not remove trip data. This launcher-only schema and the actual firmware need in-car verification; if rejected or HMG-API is absent, use the NEMESIS application entry. Existing OTA alone does not install the launcher wrapper; use the updated USB package once.
