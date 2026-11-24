@@ -67,7 +67,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==11&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED&&meter!=null)meter.requestGps();}
     private void settings(){if(meter==null)return;
-        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+meter.modeLabel(),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기","GPS 지역 자동 선택: "+(meter.autoRegion?"ON":"OFF"),"운행 기록 / 통계","연료비 설정 및 비교","LED 테마 / 밝기","GPS · 차속 진단","통행료 추가","영수증 QR / CSV","GitHub 업데이트","부팅 시 서비스 시작: "+(meter.boot?"ON":"OFF") };
+        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+meter.modeLabel(),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기","GPS 지역 자동 선택: "+(meter.autoRegion?"ON":"OFF"),"운행 기록 / 통계","연료비 설정 및 비교","LED 테마 / 밝기","GPS · 차속 진단","통행료 추가","영수증 QR / CSV","GitHub 업데이트","부팅 시 서비스 시작: "+(meter.boot?"ON":"OFF"),"앱 버전 정보 · "+installedVersion() };
         new android.app.AlertDialog.Builder(this).setTitle("미터기 설정").setItems(options,(d,n)->{
             if(meter==null)return;
             if(n==0){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();return;}
@@ -76,7 +76,7 @@ public final class MainActivity extends Activity {
             else if(n==2){meter.auto=!meter.auto;meter.saveSettings();}
             else if(n==3){if(meter.hasReceipt){meter.ended=true;}else android.widget.Toast.makeText(this,"저장된 영수증 없음",0).show();}
             else if(n==4){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();}else meter.setAutoRegion(!meter.autoRegion);}
-            else if(n==5)history();else if(n==6)fuelSettings();else if(n==7)themeSettings();else if(n==8)diagnostics();else if(n==9)toll();else if(n==10)exports();else if(n==11)updates();else if(n==12){meter.boot=!meter.boot;meter.saveOptions();}
+            else if(n==5)history();else if(n==6)fuelSettings();else if(n==7)themeSettings();else if(n==8)diagnostics();else if(n==9)toll();else if(n==10)exports();else if(n==11)updates();else if(n==12){meter.boot=!meter.boot;meter.saveOptions();}else if(n==13)versionInfo();
             view.invalidate();
         }).setNegativeButton("닫기",null).show();
     }
@@ -85,11 +85,34 @@ public final class MainActivity extends Activity {
     private void history(){new android.app.AlertDialog.Builder(this).setTitle("운행 기록").setItems(new String[]{"오늘","이번 주","이번 달","최근 100건"},(d,n)->{if(meter!=null)message("운행 통계",n==3?meter.trips.recent():meter.trips.summary(n));}).show();}
     private void fuelSettings(){if(meter==null)return;android.widget.LinearLayout box=new android.widget.LinearLayout(this);box.setOrientation(1);android.widget.EditText e=new android.widget.EditText(this),p=new android.widget.EditText(this);e.setHint("연비 km/L");e.setInputType(8194);e.setText(""+meter.efficiency);p.setHint("유가 원/L");p.setInputType(2);p.setText(""+meter.price);box.addView(e);box.addView(p);new android.app.AlertDialog.Builder(this).setTitle("예상 연료비 "+meter.fuel(meter.km)+"원 / 택시 "+meter.fare.total()+"원").setView(box).setPositiveButton("저장",(d,n)->{try{float ef=Float.parseFloat(e.getText().toString());int pr=Integer.parseInt(p.getText().toString());if(ef>=1&&ef<=100&&pr>0&&pr<=10000){meter.efficiency=ef;meter.price=pr;meter.saveOptions();}}catch(Exception ignored){}}).setNegativeButton("취소",null).show();}
     private void themeSettings(){new android.app.AlertDialog.Builder(this).setTitle("화면 테마").setItems(new String[]{"LED 색상","밝기","자동 야간 밝기: "+(meter.nightDim?"ON":"OFF")},(d,n)->{if(n==0)new android.app.AlertDialog.Builder(this).setSingleChoiceItems(new String[]{"레드","앰버","그린","아이스 블루","화이트","퍼플"},meter.theme,(q,i)->{meter.theme=i;meter.saveOptions();q.dismiss();}).show();else if(n==1){android.widget.SeekBar b=new android.widget.SeekBar(this);b.setMax(80);b.setProgress(meter.brightness-20);new android.app.AlertDialog.Builder(this).setTitle("밝기 20~100%").setView(b).setPositiveButton("저장",(q,i)->{meter.brightness=20+b.getProgress();meter.saveOptions();}).show();}else{meter.nightDim=!meter.nightDim;meter.saveOptions();}}).show();}
-    private void diagnostics(){android.app.AlertDialog d=new android.app.AlertDialog.Builder(this).setTitle("실시간 차속 진단").setMessage(meter.diagnostics()).setPositiveButton("닫기",null).create();d.show();handler.post(new Runnable(){public void run(){if(d.isShowing()&&meter!=null){d.setMessage(meter.diagnostics());handler.postDelayed(this,1000);}}});}
+    private void diagnostics(){
+        android.widget.ScrollView scroll=new android.widget.ScrollView(this);
+        android.widget.LinearLayout rows=new android.widget.LinearLayout(this);
+        rows.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int pad=(int)(16*getResources().getDisplayMetrics().density+0.5f);
+        rows.setPadding(pad,pad/2,pad,pad/2);scroll.addView(rows);
+        String[] values=meter.diagnosticRows();
+        android.widget.TextView[] labels=new android.widget.TextView[values.length+1];
+        for(int i=0;i<labels.length;i++){
+            labels[i]=new android.widget.TextView(this);
+            labels[i].setTextSize(16);labels[i].setPadding(0,pad/4,0,pad/4);
+            labels[i].setText(i==0?"앱 버전: "+installedVersion():values[i-1]);rows.addView(labels[i]);
+        }
+        android.app.AlertDialog d=new android.app.AlertDialog.Builder(this).setTitle("실시간 차속 진단").setView(scroll).setPositiveButton("닫기",null).create();
+        d.show();handler.postDelayed(new Runnable(){public void run(){if(d.isShowing()&&meter!=null){String[] v=meter.diagnosticRows();for(int i=0;i<v.length;i++)labels[i+1].setText(v[i]);handler.postDelayed(this,1000);}}},1000);
+    }
+    private String installedVersion(){try{android.content.pm.PackageInfo p=getPackageManager().getPackageInfo(getPackageName(),0);return p.versionName+" (Build "+p.versionCode+")";}catch(android.content.pm.PackageManager.NameNotFoundException e){return "확인 불가";}}
+    private void versionInfo(){try{android.content.pm.PackageInfo p=getPackageManager().getPackageInfo(getPackageName(),0);
+        android.widget.LinearLayout rows=new android.widget.LinearLayout(this);rows.setOrientation(1);int pad=(int)(16*getResources().getDisplayMetrics().density+0.5f);rows.setPadding(pad,pad,pad,pad);
+        String[] values={"앱 버전: "+p.versionName,"VersionCode: "+p.versionCode,"OTA 태그: v"+p.versionCode,"패키지: "+p.packageName,"Android: "+android.os.Build.VERSION.RELEASE+" (API "+android.os.Build.VERSION.SDK_INT+")","최종 설치/업데이트: "+java.text.DateFormat.getDateTimeInstance().format(new java.util.Date(p.lastUpdateTime))};
+        for(String value:values){android.widget.TextView t=new android.widget.TextView(this);t.setTextSize(16);t.setPadding(0,pad/4,0,pad/4);t.setText(value);rows.addView(t);}
+        android.widget.ScrollView scroll=new android.widget.ScrollView(this);scroll.addView(rows);
+        new android.app.AlertDialog.Builder(this).setTitle("앱 버전 정보").setView(scroll).setPositiveButton("닫기",null).show();
+    }catch(android.content.pm.PackageManager.NameNotFoundException e){message("앱 버전 정보","설치 버전을 확인할 수 없습니다.");}}
     private void toll(){if(!meter.running){message("통행료","운행 중에만 추가할 수 있습니다.");return;}android.widget.EditText e=new android.widget.EditText(this);e.setInputType(2);new android.app.AlertDialog.Builder(this).setTitle("통행료 추가 / 현재 "+meter.toll+"원").setView(e).setPositiveButton("추가",(d,n)->{try{int t=Integer.parseInt(e.getText().toString());if(meter.running&&t>=0&&t<=1000000&&meter.toll<=1000000-t){meter.toll+=t;meter.saveActive();}}catch(Exception ignored){}}).setNegativeButton("취소",null).show();}
     private void exports(){new android.app.AlertDialog.Builder(this).setTitle("내보내기").setItems(new String[]{"운행 기록 CSV","마지막 영수증 QR"},(d,n)->{if(n==0){if(Build.VERSION.SDK_INT<19){message("CSV","Android 4.4 이상 파일 저장 지원");return;}Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("text/csv");i.putExtra(Intent.EXTRA_TITLE,"5W_trips.csv");try{startActivityForResult(i,61);}catch(Exception e){message("CSV","파일 저장 앱 없음");}}else if(meter.hasReceipt){try{String data="5W "+meter.receiptFare.tariff().region+" "+meter.receiptKm+" km / "+meter.receiptFare.total()+" KRW / toll "+meter.receiptToll+" / avg "+meter.receiptAverage()+" / max "+meter.receiptMax+" / end "+meter.receiptEndSpeed+" / source "+MeterService.sourceList(meter.receiptSources);com.google.zxing.common.BitMatrix bits=new com.google.zxing.qrcode.QRCodeWriter().encode(data,com.google.zxing.BarcodeFormat.QR_CODE,300,300);android.graphics.Bitmap bmp=android.graphics.Bitmap.createBitmap(300,300,android.graphics.Bitmap.Config.RGB_565);for(int y=0;y<300;y++)for(int x=0;x<300;x++)bmp.setPixel(x,y,bits.get(x,y)?0xff000000:0xffffffff);android.widget.ImageView image=new android.widget.ImageView(this);image.setImageBitmap(bmp);new android.app.AlertDialog.Builder(this).setTitle("영수증 QR").setView(image).setPositiveButton("닫기",null).show();}catch(Exception e){message("QR","생성 실패");}}else message("QR","영수증 없음");}).show();}
     @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==61&&result==RESULT_OK&&data!=null&&meter!=null){try(java.io.OutputStream out=getContentResolver().openOutputStream(data.getData())){meter.trips.csv(out);message("CSV","저장 완료");}catch(Exception e){message("CSV","저장 실패: "+e.getMessage());}}}
-    private void updates(){boolean enabled=getSharedPreferences("meter",0).getBoolean("ota_auto",true);new android.app.AlertDialog.Builder(this).setTitle("GitHub OTA / 0.5.2").setItems(new String[]{"지금 확인","자동 확인: "+(enabled?"ON":"OFF")},(d,n)->{if(n==0)ota.check(true);else getSharedPreferences("meter",0).edit().putBoolean("ota_auto",!enabled).apply();}).show();}
+    private void updates(){boolean enabled=getSharedPreferences("meter",0).getBoolean("ota_auto",true);new android.app.AlertDialog.Builder(this).setTitle("GitHub OTA / "+installedVersion()).setItems(new String[]{"지금 확인","자동 확인: "+(enabled?"ON":"OFF")},(d,n)->{if(n==0)ota.check(true);else getSharedPreferences("meter",0).edit().putBoolean("ota_auto",!enabled).apply();}).show();}
 
     private final class MeterView extends View {
         private final Paint p=new Paint(3);
