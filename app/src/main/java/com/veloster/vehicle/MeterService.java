@@ -111,7 +111,7 @@ public final class MeterService extends Service implements LocationListener {
         if(waitStop&&!Float.isNaN(v)&&v<=3)waitStop=false;
         if(auto&&!running&&!waitStop&&!Float.isNaN(v)&&v>3){startTrip();dt=0;}
         if(running&&!Float.isNaN(v)){maxSpeed=Float.isNaN(maxSpeed)?v:Math.max(maxSpeed,v);speedSources|=sourceBit(speed.source(now));}
-        if(running&&dt>0){fare.add(v,dt,surcharge());secs+=dt;if(Float.isNaN(v)||v<=TaxiFare.SLOW_KMH)slowSecs+=dt;if(!Float.isNaN(v))km+=v*dt/3600.0;}
+        if(running&&dt>0){secs+=dt;if(!Float.isNaN(v)){fare.add(v,dt,surcharge());if(fare.slow(v))slowSecs+=dt;km+=v*dt/3600.0;}}
         if(running&&now-checkpoint>=2000){checkpoint=now;saveActive();}
         handler.postDelayed(this,100);
     }};

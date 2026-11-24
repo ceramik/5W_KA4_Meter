@@ -145,9 +145,9 @@ public final class MainActivity extends Activity {
             HorseFrames.draw(c,p,46,176,108,63,horseFrame,LED);
             String shown=String.valueOf(meter.fare.total());while(shown.length()<5)shown=" "+shown;
             seg7(c,shown,452,160,90,LED,LED_DIM);text(c,"원",494,252,22,LED,Paint.Align.RIGHT,true);
-            String hint=!meter.running?(!meter.auto?"자동 시작 OFF · 버튼으로 시작":meter.waitStop?"자동 재시작은 정차 후 · 수동 시작 가능":"움직이면 자동 시작 · 버튼으로 바로 시작"):(Float.isNaN(v)||v<=TaxiFare.SLOW_KMH)?String.format(Locale.US,"%s · +%d원까지 %.0f초",Float.isNaN(v)?"시간만":"시간 요금",meter.fare.nextStepWon(),Math.ceil(meter.fare.secondsToNext())):String.format(Locale.US,"다음 %d원까지 %.0f m",meter.fare.nextStepWon(),Math.ceil(meter.fare.toNext()));
+            String hint=!meter.running?(!meter.auto?"자동 시작 OFF · 버튼으로 시작":meter.waitStop?"자동 재시작은 정차 후 · 수동 시작 가능":"움직이면 자동 시작 · 버튼으로 바로 시작"):Float.isNaN(v)?"차속 미수신 · 요금 적산 보류":meter.fare.slow(v)?String.format(Locale.US,"%s · +%d원까지 %.0f초",v<=0.5f?"시간 요금":"거리·시간",meter.fare.nextStepWon(),Math.ceil(meter.fare.secondsToNext(v))):String.format(Locale.US,"다음 %d원까지 %.0f m",meter.fare.nextStepWon(),Math.ceil(meter.fare.toNext()));
             text(c,hint,46,280,12,0xffc67f5c,Paint.Align.LEFT,false);
-            fill(c,290,272,490,280,LED_DIM);fill(c,290,272,290+200*(meter.running&&(Float.isNaN(v)||v<=TaxiFare.SLOW_KMH)?meter.fare.timeProgress():meter.fare.progress()),280,LED);
+            fill(c,290,272,490,280,LED_DIM);fill(c,290,272,290+200*meter.fare.progress(),280,LED);
             String[] label={"주행 거리 km","주행 시간","저속 시간","현재 속도 km/h","평균 속도 km/h","최고 속도 km/h"};String[] value={String.format(Locale.US,"%.2f",meter.km),time(meter.secs),time(meter.slowSecs),speedText(v),speedText(meter.averageSpeed()),speedText(meter.maxSpeed)};
             for(int i=0;i<6;i++){float x=34+(i%3)*158,y=294+(i/3)*42;round(c,x,y,x+148,y+39,4,0xff210e0a);text(c,label[i],x+6,y+12,10,0xffbd6c50,Paint.Align.LEFT,false);seg7(c,value[i].replace("—","-"),x+140,y+15,20,LED,LED_DIM);}
             text(c,"차속 수신: "+meter.speed.source(SystemClock.elapsedRealtime()),34,385,10,Float.isNaN(v)?0xffaaaaaa:LED,Paint.Align.LEFT,true);

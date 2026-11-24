@@ -24,6 +24,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Test fare model
+        run: |
+          mkdir -p /tmp/fare-test
+          javac -encoding UTF-8 -d /tmp/fare-test app/src/main/java/com/veloster/vehicle/TaxiFare.java app/src/main/java/com/veloster/vehicle/TaxiTariff.java tests/FareModelTest.java
+          java -cp /tmp/fare-test com.veloster.vehicle.FareModelTest
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
