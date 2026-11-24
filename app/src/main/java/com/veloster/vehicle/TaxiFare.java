@@ -19,6 +19,10 @@ public final class TaxiFare {
             won+=w*(1+sur);
         }
     }
+    float savedMeters(){return meters;}
+    float savedWon(){return won;}
+    void restore(TaxiTariff t,float m,int du,int tu,int dw,int tw,float w){tariff=t;meters=m;distUnits=du;timeUnits=tu;distWon=dw;timeWon=tw;won=w;}
+    void copyFrom(TaxiFare o){restore(o.tariff,o.meters,o.distUnits,o.timeUnits,o.distWon,o.timeWon,o.won);}
     public int total(){return tariff.base+distWon+timeWon+surcharge();}
     public int surcharge(){return Math.round((won-tariff.base-distWon-timeWon)/100f)*100;}
     public float toNext(){return tariff.baseM+tariff.stepM*(distUnits+timeUnits+1)-meters;}

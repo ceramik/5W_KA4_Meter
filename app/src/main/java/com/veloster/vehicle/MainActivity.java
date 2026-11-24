@@ -28,69 +28,52 @@ import java.util.Calendar;
 import java.util.Locale;
 
 /** Standalone port of the original TaxiCluster presentation; non-privileged speed bridge is read-only. */
-public final class MainActivity extends Activity implements LocationListener {
+public final class MainActivity extends Activity {
     public static final String SPEED_ACTION="me.bamtol.ka4taximeter.VEHICLE_SPEED";
     public static final String SPEED_EXTRA="speed_kmh";
-    private static final String[] REGIONS={"서울","경기","인천","부산","대구","광주","대전","울산","세종","강원","충북","충남","전북","전남","경북","경남","제주"};
-    private final SpeedArbiter speed=new SpeedArbiter();
-    private final TaxiFare fare=new TaxiFare();
-    private final Handler handler=new Handler();
-    private final BroadcastReceiver bridge=new BroadcastReceiver(){@Override public void onReceive(Context c,Intent intent){
-        if(!SPEED_ACTION.equals(intent.getAction())||!intent.hasExtra(SPEED_EXTRA))return;
-        Object raw=intent.getExtras()==null?null:intent.getExtras().get(SPEED_EXTRA);
-        if(raw instanceof Number)speed.vehicle(((Number)raw).floatValue(),SystemClock.elapsedRealtime());
-    }};
-    private LocationManager gps;
-    private Location lastPosition;
+    private static final String[] REGIONS=MeterService.REGIONS;
+    private MeterService meter;
+    private boolean bound,permissionAsked;
     private MeterView view;
-    private int region=0;
-    private boolean running=false,ended=false,waitStop=false,outside=false,hadTrip=false;
-    private double km=0;private float secs=0,slowSecs=0;
-    private long lastTick=-1;
+    private final Handler handler=new Handler();
     private MusicMonitor.Track music=new MusicMonitor.Track();
     private long lastMusic=-1;
-    private final Runnable updater=new Runnable(){@Override public void run(){
-        long now=SystemClock.elapsedRealtime();float v=speed.speed(now);
-        float dt=lastTick<0?0:Math.max(0,Math.min((now-lastTick)/1000f,1.5f));lastTick=now;
-        if(waitStop&&!Float.isNaN(v)&&v<=3)waitStop=false;
-        if(!running&&!waitStop&&!Float.isNaN(v)&&v>3)startTrip();
-        if(running&&dt>0&&!Float.isNaN(v)){
-            fare.add(v,dt,surcharge());km+=v*dt/3600.0;secs+=dt;if(v<=15)slowSecs+=dt;
-        }
+    private final Runnable updater=new Runnable(){public void run(){
+        long now=SystemClock.elapsedRealtime();
         if(lastMusic<0||now-lastMusic>=1000){music=MusicMonitor.read(MainActivity.this);lastMusic=now;}
         if(view!=null)view.invalidate();handler.postDelayed(this,80);
     }};
-    private float surcharge(){return fare.tariff().surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside);}
-    private void startTrip(){TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));km=0;secs=0;slowSecs=0;running=true;ended=false;hadTrip=true;}
-    private void endTrip(){running=false;ended=true;waitStop=true;}
+    private final android.content.ServiceConnection connection=new android.content.ServiceConnection(){
+        public void onServiceConnected(android.content.ComponentName n,android.os.IBinder b){meter=((MeterService.LocalBinder)b).service();requestGps();view.invalidate();}
+        public void onServiceDisconnected(android.content.ComponentName n){meter=null;}
+    };
     @Override public void onCreate(Bundle b){super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN|WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getDecorView().setSystemUiVisibility(5894|1024|512);
         view=new MeterView();setContentView(view);
-        fare.start(TaxiTariff.of(REGIONS[region]),0);
-        gps=(LocationManager)getSystemService(LOCATION_SERVICE);
-        IntentFilter f=new IntentFilter(SPEED_ACTION);
-        if(Build.VERSION.SDK_INT>=33)registerReceiver(bridge,f,Context.RECEIVER_EXPORTED);else registerReceiver(bridge,f);
+        Intent i=new Intent(this,MeterService.class);
+        startService(i);bound=bindService(i,connection,Context.BIND_AUTO_CREATE);
     }
-    @Override protected void onResume(){super.onResume();requestGps();lastTick=SystemClock.elapsedRealtime();handler.post(updater);}
-    @Override protected void onPause(){handler.removeCallbacks(updater);if(gps!=null)gps.removeUpdates(this);speed.clearGps();super.onPause();}
-    @Override protected void onDestroy(){unregisterReceiver(bridge);super.onDestroy();}
-    private void requestGps(){try{
-        if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},11);return;}
-        if(gps!=null)gps.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,0,this);
-    }catch(SecurityException ignored){}catch(IllegalArgumentException ignored){}
+    @Override protected void onResume(){super.onResume();requestGps();handler.removeCallbacks(updater);handler.post(updater);}
+    @Override protected void onPause(){handler.removeCallbacks(updater);super.onPause();}
+    @Override protected void onDestroy(){if(bound)unbindService(connection);super.onDestroy();}
+    private void requestGps(){
+        if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED){if(!permissionAsked){permissionAsked=true;requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},11);}return;}
+        if(meter!=null)meter.requestGps();
     }
-    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==11&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED)requestGps();}
-    @Override public void onLocationChanged(Location loc){if(loc==null)return;float k=Float.NaN;
-        if(loc.hasSpeed())k=Math.max(0,loc.getSpeed()*3.6f);
-        else if(lastPosition!=null&&loc.getTime()>lastPosition.getTime()){
-            long ms=loc.getTime()-lastPosition.getTime();if(ms>=500)k=lastPosition.distanceTo(loc)*3600f/ms;
-        }
-        if(!Float.isNaN(k))speed.gps(k,SystemClock.elapsedRealtime());lastPosition=loc;
+    @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==11&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED&&meter!=null)meter.requestGps();}
+    private void settings(){if(meter==null)return;
+        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+(meter.outside?"ON":"OFF"),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기"};
+        new android.app.AlertDialog.Builder(this).setTitle("미터기 설정").setItems(options,(d,n)->{
+            if(meter==null)return;
+            if(n==0){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();return;}
+                new android.app.AlertDialog.Builder(this).setTitle("지역 요금 선택").setSingleChoiceItems(REGIONS,meter.region,(dialog,r)->{if(meter!=null)meter.setRegion(r);dialog.dismiss();view.invalidate();}).setNegativeButton("취소",null).show();
+            }else if(n==1){meter.outside=!meter.outside;meter.saveSettings();}
+            else if(n==2){meter.auto=!meter.auto;meter.saveSettings();}
+            else if(meter.hasReceipt){meter.ended=true;}else android.widget.Toast.makeText(this,"저장된 영수증 없음",0).show();
+            view.invalidate();
+        }).setNegativeButton("닫기",null).show();
     }
-    @Override public void onProviderDisabled(String name){speed.clearGps();}
-    @Override public void onProviderEnabled(String name){}
-    @Override public void onStatusChanged(String provider,int status,Bundle extras){}
 
     private final class MeterView extends View {
         private final Paint p=new Paint(3);
@@ -106,31 +89,31 @@ public final class MainActivity extends Activity implements LocationListener {
         private String time(float s){int v=(int)Math.max(0,s);return String.format(Locale.US,"%02d:%02d",v/60,v%60);}
         private String clock(long ms){long s=Math.max(0,ms)/1000;return String.format(Locale.US,"%d:%02d",s/60,s%60);}
         @Override public void onDraw(Canvas c){super.onDraw(c);
-            int save=c.save();c.scale(getWidth()/800f,getHeight()/480f);c.drawColor(0xff14110e);
-            float v=speed.speed(SystemClock.elapsedRealtime());boolean moving=!Float.isNaN(v)&&v>0.5f;
-            if(lastAnim>0&&running&&moving)phase+=Math.min(500,SystemClock.elapsedRealtime()-lastAnim)/Math.max(40f,100-v);
-            lastAnim=SystemClock.elapsedRealtime();int horseFrame=running&&moving?(int)phase%HorseFrames.FRAMES.length:3;
+            if(meter==null){c.drawColor(0xff14110e);return;} int save=c.save();c.scale(getWidth()/800f,getHeight()/480f);c.drawColor(0xff14110e);
+            float v=meter.speed.speed(SystemClock.elapsedRealtime());boolean moving=!Float.isNaN(v)&&v>0.5f;
+            if(lastAnim>0&&meter.running&&moving)phase+=Math.min(500,SystemClock.elapsedRealtime()-lastAnim)/Math.max(40f,100-v);
+            lastAnim=SystemClock.elapsedRealtime();int horseFrame=meter.running&&moving?(int)phase%HorseFrames.FRAMES.length:3;
             round(c,14,60,522,470,14,0xff1d1d20);round(c,22,68,514,462,10,0xff0c0c0d);
             text(c,"KOREA DIGITAL TAXIMETER",34,88,12,0xff5d5d63,Paint.Align.LEFT,true);
-            text(c,REGIONS[region]+" 요금 · "+speed.source(SystemClock.elapsedRealtime())+(outside?" · 시계외":""),502,88,12,0xffaaaaaa,Paint.Align.RIGHT,true);
-            String[] labs={"빈차","주행","할증","예약","호출"};boolean[] lamps={!running,running,surcharge()>0,false,false};int[] colors={0xffff3b2f,GREEN,0xffffb020,0xff3fa2ff,0xffff3b2f};
+            text(c,REGIONS[meter.region]+" 요금 · "+meter.speed.source(SystemClock.elapsedRealtime())+(meter.outside?" · 시계외":""),502,88,12,0xffaaaaaa,Paint.Align.RIGHT,true);
+            String[] labs={"빈차","주행","할증","예약","호출"};boolean[] lamps={!meter.running,meter.running,meter.surcharge()>0,false,false};int[] colors={0xffff3b2f,GREEN,0xffffb020,0xff3fa2ff,0xffff3b2f};
             for(int i=0;i<5;i++){float x=34+i*94;round(c,x,98,x+84,128,5,lamps[i]?colors[i]:0xff1a1a1c);text(c,labs[i],x+42,119,16,lamps[i]?0xff111111:0xff4a4a50,Paint.Align.CENTER,true);}
             round(c,34,140,502,290,8,0xff220e0a);outline(c,34,140,502,290,8,0xff603529);
             text(c,moving?"요금 · 주행":"요금 · 정차",46,162,13,0xffbd6c50,Paint.Align.LEFT,true);
             fill(c,44,174,154,240,0xff29110e);
             HorseFrames.draw(c,p,46,176,108,63,horseFrame,LED);
-            String shown=String.valueOf(fare.total());while(shown.length()<5)shown=" "+shown;
+            String shown=String.valueOf(meter.fare.total());while(shown.length()<5)shown=" "+shown;
             seg7(c,shown,452,160,90,LED,LED_DIM);text(c,"원",494,252,22,LED,Paint.Align.RIGHT,true);
-            String hint=waitStop?"정차 후 다음 운행 준비":!running?"움직이면 자동 시작 · 버튼으로 바로 시작":Float.isNaN(v)?"속도 미수신 · 요금 계산 일시정지":v<=15?String.format(Locale.US,"시간 요금 · %d초당 100원",fare.tariff().stepS):String.format(Locale.US,"다음 100원까지 %.0f m",Math.ceil(fare.toNext()));
+            String hint=!meter.running?(!meter.auto?"자동 시작 OFF · 버튼으로 시작":meter.waitStop?"자동 재시작은 정차 후 · 수동 시작 가능":"움직이면 자동 시작 · 버튼으로 바로 시작"):Float.isNaN(v)?"속도 미수신 · 요금 계산 일시정지":v<=15?String.format(Locale.US,"시간 요금 · %d초당 100원",meter.fare.tariff().stepS):String.format(Locale.US,"다음 100원까지 %.0f m",Math.ceil(meter.fare.toNext()));
             text(c,hint,46,280,12,0xffc67f5c,Paint.Align.LEFT,false);
-            fill(c,290,272,490,280,LED_DIM);fill(c,290,272,290+200*fare.progress(),280,LED);
-            String[] label={"주행 거리 km","주행 시간","저속 시간"};String[] value={String.format(Locale.US,"%.2f",km),time(secs),time(slowSecs)};
+            fill(c,290,272,490,280,LED_DIM);fill(c,290,272,290+200*meter.fare.progress(),280,LED);
+            String[] label={"주행 거리 km","주행 시간","저속 시간"};String[] value={String.format(Locale.US,"%.2f",meter.km),time(meter.secs),time(meter.slowSecs)};
             for(int i=0;i<3;i++){float x=34+i*158;round(c,x,302,x+148,374,6,0xff210e0a);text(c,label[i],x+10,320,12,0xffbd6c50,Paint.Align.LEFT,false);seg7(c,value[i],x+138,330,34,LED,LED_DIM);}
-            round(c,34,386,268,452,8,running?0xff902f25:waitStop?0xff555555:0xff206d3c);
-            text(c,running?"운행 종료 · 버튼":waitStop?"정차 후 다음 운행":"운행 시작",151,426,25,0xffffffff,Paint.Align.CENTER,true);
-            TaxiTariff tariff=fare.tariff();text(c,String.format(Locale.US,"기본 %,d원 (%.1f km)",tariff.base,tariff.baseM/1000f),282,414,13,0xff8a8a90,Paint.Align.LEFT,false);
+            round(c,34,386,268,452,8,meter.running?0xff902f25:0xff206d3c);
+            text(c,meter.running?"운행 종료 · 버튼":"운행 시작",151,426,25,0xffffffff,Paint.Align.CENTER,true);
+            TaxiTariff tariff=meter.fare.tariff();text(c,String.format(Locale.US,"기본 %,d원 (%.1f km)",tariff.base,tariff.baseM/1000f),282,414,13,0xff8a8a90,Paint.Align.LEFT,false);
             text(c,"심야 "+tariff.nightHours()+"시 최대 "+tariff.nightMax()+"% · 시계외 "+tariff.out+"%",282,438,12,0xff8a8a90,Paint.Align.LEFT,false);
-            if(ended)receipt(c,v);else radio(c);
+            if(meter.ended)receipt(c,v);else radio(c);
             // Idle settings: tapping region name cycles area; long tapping region toggles city-outside flag.
             c.restoreToCount(save);
         }
@@ -193,28 +176,27 @@ public final class MainActivity extends Activity implements LocationListener {
             int ink=0xff2a2724,soft=0xff7a756c;
             text(c,"영 수 증",(l+rr)/2,t+30,18,0xff1d1b18,Paint.Align.CENTER,true);
             for(float x=l+16;x<rr-16;x+=6)fill(c,x,t+44,x+3,t+45,0xffbdb7aa);
-            mono(c,"거리  "+String.format(Locale.US,"%.2f km",km),l+16,t+68,13,ink,Paint.Align.LEFT);
-            mono(c,"시간  "+time(secs),l+16,t+88,13,ink,Paint.Align.LEFT);
+            mono(c,"거리  "+String.format(Locale.US,"%.2f km",meter.receiptKm),l+16,t+68,13,ink,Paint.Align.LEFT);
+            mono(c,"시간  "+time(meter.receiptSecs),l+16,t+88,13,ink,Paint.Align.LEFT);
             for(float x=l+16;x<rr-16;x+=6)fill(c,x,t+102,x+3,t+103,0xffbdb7aa);
-            TaxiTariff tf=fare.tariff();String[] labels={String.format(Locale.US,"기본요금 %.1f km",tf.baseM/1000f),"거리 "+tf.stepM+"m × "+fare.distUnits,"시간 "+tf.stepS+"초 × "+fare.timeUnits,"할증 (심야·시계외)"};
-            int[] amounts={tf.base,fare.distWon,fare.timeWon,fare.surcharge()};
+            TaxiTariff tf=meter.receiptFare.tariff();String[] labels={String.format(Locale.US,"기본요금 %.1f km",tf.baseM/1000f),"거리 "+tf.stepM+"m × "+meter.receiptFare.distUnits,"시간 "+tf.stepS+"초 × "+meter.receiptFare.timeUnits,"할증 (심야·시계외)"};
+            int[] amounts={tf.base,meter.receiptFare.distWon,meter.receiptFare.timeWon,meter.receiptFare.surcharge()};
             for(int i=0;i<4;i++){text(c,labels[i],l+16,t+126+i*24,12,ink,Paint.Align.LEFT,false);mono(c,String.format(Locale.US,"%,d",amounts[i]),rr-16,t+126+i*24,13,ink,Paint.Align.RIGHT);}
-            fill(c,l+16,t+212,rr-16,t+214,ink);text(c,"합계",l+16,t+242,16,ink,Paint.Align.LEFT,true);text(c,String.format(Locale.US,"%,d원",fare.total()),rr-16,t+242,20,0xffb3261e,Paint.Align.RIGHT,true);
-            text(c,running?"운행 중":"운행 종료",l+16,t+268,12,soft,Paint.Align.LEFT,false);
-            text(c,"현재 "+(Float.isNaN(v)?"—":String.format(Locale.US,"%.0f",v))+" km/h · "+speed.source(SystemClock.elapsedRealtime()),l+16,t+288,12,soft,Paint.Align.LEFT,false);
+            fill(c,l+16,t+212,rr-16,t+214,ink);text(c,"합계",l+16,t+242,16,ink,Paint.Align.LEFT,true);text(c,String.format(Locale.US,"%,d원",meter.receiptFare.total()),rr-16,t+242,20,0xffb3261e,Paint.Align.RIGHT,true);
+            text(c,"운행 종료 · "+meter.receiptFare.tariff().region,l+16,t+268,12,soft,Paint.Align.LEFT,false);
+            text(c,"현재 "+(Float.isNaN(v)?"—":String.format(Locale.US,"%.0f",v))+" km/h · "+meter.speed.source(SystemClock.elapsedRealtime()),l+16,t+288,12,soft,Paint.Align.LEFT,false);
             for(int i=0,x=(int)l+30;x<rr-30;i++){int bw=1+((i*7)%3);fill(c,x,t+310,x+bw,t+344,ink);x+=bw+1+((i*5)%2);}
             text(c,"누르면 음악으로",(l+rr)/2,t+370,12,soft,Paint.Align.CENTER,false);
         }
         private float downX,downY;private long downAt;
         @Override public boolean onTouchEvent(MotionEvent ev){float x=ev.getX()*800f/getWidth(),y=ev.getY()*480f/getHeight();
-            if(ev.getAction()==MotionEvent.ACTION_DOWN){downX=x;downY=y;downAt=SystemClock.elapsedRealtime();return true;}
+            if(meter==null)return true; if(ev.getAction()==MotionEvent.ACTION_DOWN){downX=x;downY=y;downAt=SystemClock.elapsedRealtime();return true;}
             if(ev.getAction()!=MotionEvent.ACTION_UP)return true;
-            if(x>=34&&x<=268&&y>=386&&y<=452){if(running)endTrip();else if(!waitStop)startTrip();}
-            else if(x>=538&&x<=784&&y>=64&&y<=452){if(ended)ended=false;else if(!music.has()&&!MusicMonitor.hasAccess(MainActivity.this)){
+            if(x>=34&&x<=268&&y>=386&&y<=452){if(meter.running)meter.endTrip();else meter.startTrip();}
+            else if(x>=538&&x<=784&&y>=64&&y<=452){if(meter.ended)meter.ended=false;else if(!music.has()&&!MusicMonitor.hasAccess(MainActivity.this)){
                 if(Build.VERSION.SDK_INT>=22)startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
             }}
-            else if(y>=60&&y<=95&&!running){if(SystemClock.elapsedRealtime()-downAt>700)outside=!outside;else{region=(region+1)%REGIONS.length;fare.start(TaxiTariff.of(REGIONS[region]),0);}}
-            else if(y>=60&&y<=95&&running&&SystemClock.elapsedRealtime()-downAt>700){outside=!outside;}
+            else if(y>=60&&y<=95){settings();}
             invalidate();return true;
         }
     }
