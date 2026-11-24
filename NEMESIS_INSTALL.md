@@ -9,3 +9,6 @@ USB descriptor and inner package metadata follow the public example in https://g
 
 ## HMG-API launcher (0.5.4)
 The USB install attempts to register a launcher tile and optional star-key action using installed HMG-API >=1.0.0. Four 99px icons are packaged. The contribution references the existing Android activity without declaring APK ownership, so removing the contribution should not remove trip data. This launcher-only schema and the actual firmware need in-car verification; if rejected or HMG-API is absent, use the NEMESIS application entry. Existing OTA alone does not install the launcher wrapper; use the updated USB package once.
+
+## 0.5.5 installation recovery
+Postinstall copies the APK to a readable file under /data/local/tmp before pm install -r, records the PackageManager result in /data/local/tmp/taximeter-install.log, and checks pm path. Launch retries installation if the APK is missing or the activity does not exist. Existing data is never automatically deleted. The exact cause of an installation failure still requires the device log.

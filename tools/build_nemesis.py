@@ -50,18 +50,43 @@ export ANDROID_ROOT=/system
 export ANDROID_DATA=/data
 export LD_LIBRARY_PATH=/vendor/lib:/system/lib
 """
-    post = common + """set -e
+    common += """export BOOTCLASSPATH=${BOOTCLASSPATH:-/system/framework/core.jar:/system/framework/conscrypt.jar:/system/framework/okhttp.jar:/system/framework/core-junit.jar:/system/framework/bouncycastle.jar:/system/framework/ext.jar:/system/framework/framework.jar:/system/framework/framework2.jar:/system/framework/telephony-common.jar:/system/framework/voip-common.jar:/system/framework/mms-common.jar:/system/framework/android.policy.jar:/system/framework/services.jar:/system/framework/apache-xml.jar:/system/framework/webviewchromium.jar:/system/framework/automotive.jar}
 PKG=hkg.taximeter
-APK=
-for D in /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG /data/local/tmp/nemesis/stage/$PKG; do
-    if [ -s "$D/bin/TaxiMeter.apk" ]; then APK="$D/bin/TaxiMeter.apk"; break; fi
-done
-[ -n "$APK" ] || { echo "TaxiMeter APK not found"; exit 1; }
-# Package manager copies APK internally. Never uninstall or clear data on failure.
-RESULT="$(/system/bin/pm install -r "$APK" 2>&1)" || { echo "$RESULT"; exit 1; }
-echo "$RESULT"
-case "$RESULT" in *Success*) ;; *) exit 1;; esac
-/system/bin/pm path me.bamtol.ka4taximeter
+APP=me.bamtol.ka4taximeter
+LOG=/data/local/tmp/taximeter-install.log
+find_apk() {
+    APK=
+    for D in /data/local/tmp/nemesis/stage/$PKG /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG; do
+        if [ -s "$D/bin/TaxiMeter.apk" ]; then APK="$D/bin/TaxiMeter.apk"; return 0; fi
+    done
+    echo "TaxiMeter APK not found"; return 1
+}
+installed() {
+    case "$(/system/bin/pm path "$APP" 2>/dev/null)" in package:*) return 0;; *) return 1;; esac
+}
+install_apk() {
+    find_apk || return 1
+    TMP=/data/local/tmp/taximeter-install.apk
+    rm -f "$TMP"
+    cp "$APK" "$TMP" || return 1
+    chmod 644 "$TMP" || { rm -f "$TMP"; return 1; }
+    RESULT="$(/system/bin/pm install -r "$TMP" 2>&1)"
+    STATUS=$?
+    rm -f "$TMP"
+    echo "$RESULT"
+    echo "$RESULT" >> "$LOG"
+    [ "$STATUS" = 0 ] || return 1
+    case "$RESULT" in *Success*) ;; *) return 1;; esac
+    installed || { echo "APK not registered after install"; return 1; }
+}
+"""
+    post = common + """umask 022
+echo "TaxiMeter postinstall $(date)" > "$LOG"
+if ! install_apk; then
+    echo "APK installation failed; see $LOG"
+    exit 1
+fi
+/system/bin/pm path "$APP"
 # Register only a launcher contribution; Android APK remains owned by PackageManager.
 D="${APK%/bin/TaxiMeter.apk}"
 if [ -f /system/framework/hmgapi-hook.jar ] && [ -d /data/hmgapi ]; then
@@ -96,7 +121,19 @@ else
 fi
 exit 0
 """
-    launch = common + """exec /system/bin/am start -n me.bamtol.ka4taximeter/com.veloster.vehicle.MainActivity
+    launch = common + """umask 022
+if ! installed; then
+    echo "APK missing; attempting recovery"
+    install_apk || { echo "Installation failed; see $LOG"; exit 1; }
+fi
+RESULT="$(/system/bin/am start -n "$APP/com.veloster.vehicle.MainActivity" 2>&1)"
+echo "$RESULT"
+echo "$RESULT" >> "$LOG"
+case "$RESULT" in *"Error type 3"*|*"does not exist"*)
+    echo "Activity missing; retrying package installation"
+    install_apk || exit 1
+    /system/bin/am start -n "$APP/com.veloster.vehicle.MainActivity"
+    ;; esac
 """
     preun = common + """# Keep the Android APK and all data: this hook can also run before upgrades.
 # Explicit Android uninstall is a separate user action.
