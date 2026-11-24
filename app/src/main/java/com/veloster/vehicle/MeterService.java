@@ -8,6 +8,10 @@ import java.util.Calendar;
 public final class MeterService extends Service implements LocationListener {
     static final String[] REGIONS={"서울","경기","인천","부산","대구","광주","대전","울산","세종","강원","충북","충남","전북","전남","경북","경남","제주"};
     final SpeedArbiter speed=new SpeedArbiter();
+    final Gen5wSpeedReader bcm=new Gen5wSpeedReader();
+    private final java.util.concurrent.ScheduledExecutorService bcmWorker=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+    private volatile boolean destroyed;
+    private void startBcm(){bcmWorker.scheduleWithFixedDelay(()->{if(destroyed)return;float v=bcm.read();long at=SystemClock.elapsedRealtime();if(!Float.isNaN(v))handler.post(()->{if(!destroyed)speed.bcm(v,at);});},0,500,java.util.concurrent.TimeUnit.MILLISECONDS);}
     final TaxiFare fare=new TaxiFare(), receiptFare=new TaxiFare();
     int region, surchargeMode=0, zone=-1, startZone=-1, pendingZone=-1, zoneCount=0;
     boolean autoRegion=false, gpsOutside=false;
@@ -42,7 +46,7 @@ public final class MeterService extends Service implements LocationListener {
     void saveOptions(){prefs.edit().putInt("theme",theme).putInt("brightness",brightness).putInt("price",price).putFloat("efficiency",efficiency).putBoolean("nightDim",nightDim).putBoolean("boot",boot).apply();}
     void saveActive(){if(!running)return;prefs.edit().putBoolean("active",true).putLong("active_start",started).putString("active_region",fare.tariff().region).putFloat("active_m",fare.savedMeters()).putFloat("active_w",fare.savedWon()).putInt("active_du",fare.distUnits).putInt("active_tu",fare.timeUnits).putInt("active_dw",fare.distWon).putInt("active_tw",fare.timeWon).putFloat("active_km",(float)km).putFloat("active_sec",secs).putFloat("active_slow",slowSecs).putInt("active_zone",startZone).putBoolean("active_out",gpsOutside).putInt("active_toll",toll).apply();}
     void restoreActive(){if(!prefs.getBoolean("active",false))return;fare.restore(TaxiTariff.of(prefs.getString("active_region","서울")),prefs.getFloat("active_m",0),prefs.getInt("active_du",0),prefs.getInt("active_tu",0),prefs.getInt("active_dw",0),prefs.getInt("active_tw",0),prefs.getFloat("active_w",0));started=prefs.getLong("active_start",System.currentTimeMillis());km=prefs.getFloat("active_km",0);secs=prefs.getFloat("active_sec",0);slowSecs=prefs.getFloat("active_slow",0);startZone=prefs.getInt("active_zone",-1);gpsOutside=prefs.getBoolean("active_out",false);toll=prefs.getInt("active_toll",0);running=true;ended=false;waitStop=false;updateOutside();}
-    String diagnostics(){long n=SystemClock.elapsedRealtime();return "차속 소스: "+speed.source(n)+"\\n차량 차속: "+speed.vehicleReading(n)+"\\nGPS 차속: "+speed.gpsReading(n)+"\\nGPS 정확도: "+(Float.isNaN(accuracy)?"미확인":accuracy+" m")+"\\n행정구역: "+zoneLabel()+"\\n할증: "+modeLabel()+" / "+Math.round(surcharge()*100)+"%\\n서비스 실행 중";}
+    String diagnostics(){long n=SystemClock.elapsedRealtime();return "차속 소스: "+speed.source(n)+"\\n5W BCM: "+speed.bcmReading(n)+" / "+bcm.status+"\\n외부 차속: "+speed.vehicleReading(n)+"\\nGPS 차속: "+speed.gpsReading(n)+"\\nGPS 정확도: "+(Float.isNaN(accuracy)?"미확인":accuracy+" m")+"\\n행정구역: "+zoneLabel()+"\\n할증: "+modeLabel()+" / "+Math.round(surcharge()*100)+"%\\n서비스 실행 중";}
 
     private LocationManager gps;
     private Location lastPosition;
@@ -70,7 +74,7 @@ public final class MeterService extends Service implements LocationListener {
         gps=(LocationManager)getSystemService(LOCATION_SERVICE);
         IntentFilter filter=new IntentFilter(MainActivity.SPEED_ACTION);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(bridge,filter,Context.RECEIVER_EXPORTED);else registerReceiver(bridge,filter);
-        lastTick=SystemClock.elapsedRealtime();handler.post(tick);
+        lastTick=SystemClock.elapsedRealtime();handler.post(tick);startBcm();
     }
     @Override public int onStartCommand(Intent i,int flags,int startId){
         if(i!=null&&"stop".equals(i.getAction())){if(running)endTrip();stopForeground(true);stopSelf();return START_NOT_STICKY;}
@@ -80,7 +84,7 @@ public final class MeterService extends Service implements LocationListener {
         PendingIntent pi=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),pf);
         PendingIntent stop=PendingIntent.getService(this,1,new Intent(this,MeterService.class).setAction("stop"),pf);
         Notification.Builder nb=Build.VERSION.SDK_INT>=26?new Notification.Builder(this,"meter"):new Notification.Builder(this);
-        nb.setSmallIcon(android.R.drawable.ic_menu_compass).setContentTitle("KA4 택시 미터기").setContentText("차속 수신 및 운행 적산").setContentIntent(pi).setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel,"운행 종료 및 서비스 중지",stop);
+        nb.setSmallIcon(android.R.drawable.ic_menu_compass).setContentTitle("5W 택시 미터기").setContentText("차속 수신 및 운행 적산").setContentIntent(pi).setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel,"운행 종료 및 서비스 중지",stop);
         startForeground(41,nb.build());requestGps();return START_NOT_STICKY;
     }
     void requestGps(){try{if(gps!=null){gps.removeUpdates(this);lastPosition=null;gps.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,0,this);}}catch(SecurityException|IllegalArgumentException ignored){}}
@@ -106,5 +110,5 @@ public final class MeterService extends Service implements LocationListener {
     @Override public void onProviderDisabled(String n){speed.clearGps();zoneAt=-1;pendingZone=-1;zoneCount=0;}
     @Override public void onProviderEnabled(String n){}
     @Override public void onStatusChanged(String n,int s,Bundle b){}
-    @Override public void onDestroy(){saveActive();if(trips!=null)trips.close();handler.removeCallbacks(tick);if(gps!=null)gps.removeUpdates(this);unregisterReceiver(bridge);super.onDestroy();}
+    @Override public void onDestroy(){destroyed=true;bcmWorker.shutdownNow();saveActive();if(trips!=null)trips.close();handler.removeCallbacks(tick);if(gps!=null)gps.removeUpdates(this);unregisterReceiver(bridge);super.onDestroy();}
 }
