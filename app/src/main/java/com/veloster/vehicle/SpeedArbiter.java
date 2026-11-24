@@ -10,5 +10,7 @@ public final class SpeedArbiter {
     public float speed(long now){if(fresh(now,vehicleAt,VEHICLE_TIMEOUT_MS))return vehicle;if(fresh(now,gpsAt,GPS_TIMEOUT_MS))return gps;return Float.NaN;}
     public String source(long now){return fresh(now,vehicleAt,VEHICLE_TIMEOUT_MS)?"차량":fresh(now,gpsAt,GPS_TIMEOUT_MS)?"GPS":"미수신";}
     private boolean fresh(long n,long at,long timeout){return at>=0&&n>=at&&n-at<=timeout;}
+    public String vehicleReading(long n){return fresh(n,vehicleAt,VEHICLE_TIMEOUT_MS)?String.format(java.util.Locale.US,"%.1f km/h",vehicle):"미수신";}
+    public String gpsReading(long n){return fresh(n,gpsAt,GPS_TIMEOUT_MS)?String.format(java.util.Locale.US,"%.1f km/h",gps):"미수신";}
     public void clearGps(){gpsAt=-1;gps=Float.NaN;}
 }

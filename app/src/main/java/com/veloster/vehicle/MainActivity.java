@@ -63,7 +63,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==11&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED&&meter!=null)meter.requestGps();}
     private void settings(){if(meter==null)return;
-        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+meter.modeLabel(),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기","GPS 지역 자동 선택: "+(meter.autoRegion?"ON":"OFF") };
+        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+meter.modeLabel(),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기","GPS 지역 자동 선택: "+(meter.autoRegion?"ON":"OFF"),"운행 기록 / 통계","연료비 설정 및 비교","LED 테마 / 밝기","GPS · 차속 진단","통행료 추가","영수증 QR / CSV","GitHub 업데이트","부팅 시 서비스 시작: "+(meter.boot?"ON":"OFF") };
         new android.app.AlertDialog.Builder(this).setTitle("미터기 설정").setItems(options,(d,n)->{
             if(meter==null)return;
             if(n==0){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();return;}
@@ -71,15 +71,26 @@ public final class MainActivity extends Activity {
             }else if(n==1){new android.app.AlertDialog.Builder(this).setTitle("시계외 할증 (심야는 별도 자동)").setSingleChoiceItems(new String[]{"GPS 자동","수동 ON","수동 OFF"},meter.surchargeMode,(dialog,i)->{if(meter!=null)meter.setSurchargeMode(i);dialog.dismiss();view.invalidate();}).setNegativeButton("취소",null).show();}
             else if(n==2){meter.auto=!meter.auto;meter.saveSettings();}
             else if(n==3){if(meter.hasReceipt){meter.ended=true;}else android.widget.Toast.makeText(this,"저장된 영수증 없음",0).show();}
-            else if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();}else meter.setAutoRegion(!meter.autoRegion);
+            else if(n==4){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();}else meter.setAutoRegion(!meter.autoRegion);}
+            else if(n==5)history();else if(n==6)fuelSettings();else if(n==7)themeSettings();else if(n==8)diagnostics();else if(n==9)toll();else if(n==10)exports();else if(n==11)updates();else if(n==12){meter.boot=!meter.boot;meter.saveOptions();}
             view.invalidate();
         }).setNegativeButton("닫기",null).show();
     }
 
+    private void message(String title,String text){new android.app.AlertDialog.Builder(this).setTitle(title).setMessage(text).setPositiveButton("닫기",null).show();}
+    private void history(){new android.app.AlertDialog.Builder(this).setTitle("운행 기록").setItems(new String[]{"오늘","이번 주","이번 달","최근 100건"},(d,n)->{if(meter!=null)message("운행 통계",n==3?meter.trips.recent():meter.trips.summary(n));}).show();}
+    private void fuelSettings(){if(meter==null)return;android.widget.LinearLayout box=new android.widget.LinearLayout(this);box.setOrientation(1);android.widget.EditText e=new android.widget.EditText(this),p=new android.widget.EditText(this);e.setHint("연비 km/L");e.setInputType(8194);e.setText(""+meter.efficiency);p.setHint("유가 원/L");p.setInputType(2);p.setText(""+meter.price);box.addView(e);box.addView(p);new android.app.AlertDialog.Builder(this).setTitle("예상 연료비 "+meter.fuel(meter.km)+"원 / 택시 "+meter.fare.total()+"원").setView(box).setPositiveButton("저장",(d,n)->{try{float ef=Float.parseFloat(e.getText().toString());int pr=Integer.parseInt(p.getText().toString());if(ef>=1&&ef<=100&&pr>0&&pr<=10000){meter.efficiency=ef;meter.price=pr;meter.saveOptions();}}catch(Exception ignored){}}).setNegativeButton("취소",null).show();}
+    private void themeSettings(){new android.app.AlertDialog.Builder(this).setTitle("화면 테마").setItems(new String[]{"LED 색상","밝기","자동 야간 밝기: "+(meter.nightDim?"ON":"OFF")},(d,n)->{if(n==0)new android.app.AlertDialog.Builder(this).setSingleChoiceItems(new String[]{"레드","앰버","그린","아이스 블루","화이트","퍼플"},meter.theme,(q,i)->{meter.theme=i;meter.saveOptions();q.dismiss();}).show();else if(n==1){android.widget.SeekBar b=new android.widget.SeekBar(this);b.setMax(80);b.setProgress(meter.brightness-20);new android.app.AlertDialog.Builder(this).setTitle("밝기 20~100%").setView(b).setPositiveButton("저장",(q,i)->{meter.brightness=20+b.getProgress();meter.saveOptions();}).show();}else{meter.nightDim=!meter.nightDim;meter.saveOptions();}}).show();}
+    private void diagnostics(){android.app.AlertDialog d=new android.app.AlertDialog.Builder(this).setTitle("실시간 차속 진단").setMessage(meter.diagnostics()).setPositiveButton("닫기",null).create();d.show();handler.post(new Runnable(){public void run(){if(d.isShowing()&&meter!=null){d.setMessage(meter.diagnostics());handler.postDelayed(this,1000);}}});}
+    private void toll(){if(!meter.running){message("통행료","운행 중에만 추가할 수 있습니다.");return;}android.widget.EditText e=new android.widget.EditText(this);e.setInputType(2);new android.app.AlertDialog.Builder(this).setTitle("통행료 추가 / 현재 "+meter.toll+"원").setView(e).setPositiveButton("추가",(d,n)->{try{int t=Integer.parseInt(e.getText().toString());if(meter.running&&t>=0&&t<=1000000&&meter.toll<=1000000-t){meter.toll+=t;meter.saveActive();}}catch(Exception ignored){}}).setNegativeButton("취소",null).show();}
+    private void exports(){new android.app.AlertDialog.Builder(this).setTitle("내보내기").setItems(new String[]{"운행 기록 CSV","마지막 영수증 QR"},(d,n)->{if(n==0){if(Build.VERSION.SDK_INT<19){message("CSV","Android 4.4 이상 파일 저장 지원");return;}Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType("text/csv");i.putExtra(Intent.EXTRA_TITLE,"KA4_trips.csv");try{startActivityForResult(i,61);}catch(Exception e){message("CSV","파일 저장 앱 없음");}}else if(meter.hasReceipt){try{String data="KA4 "+meter.receiptFare.tariff().region+" "+meter.receiptKm+" km / "+meter.receiptFare.total()+" KRW / toll "+meter.receiptToll;com.google.zxing.common.BitMatrix bits=new com.google.zxing.qrcode.QRCodeWriter().encode(data,com.google.zxing.BarcodeFormat.QR_CODE,300,300);android.graphics.Bitmap bmp=android.graphics.Bitmap.createBitmap(300,300,android.graphics.Bitmap.Config.RGB_565);for(int y=0;y<300;y++)for(int x=0;x<300;x++)bmp.setPixel(x,y,bits.get(x,y)?0xff000000:0xffffffff);android.widget.ImageView image=new android.widget.ImageView(this);image.setImageBitmap(bmp);new android.app.AlertDialog.Builder(this).setTitle("영수증 QR").setView(image).setPositiveButton("닫기",null).show();}catch(Exception e){message("QR","생성 실패");}}else message("QR","영수증 없음");}).show();}
+    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==61&&result==RESULT_OK&&data!=null&&meter!=null){try(java.io.OutputStream out=getContentResolver().openOutputStream(data.getData())){meter.trips.csv(out);message("CSV","저장 완료");}catch(Exception e){message("CSV","저장 실패: "+e.getMessage());}}}
+    private void updates(){message("GitHub 업데이트","현재 버전 0.4.0. GitHub Actions 또는 Releases에서 APK를 내려받아 설치하세요. 고정 서명 키 및 자동 설치는 별도 구성 필요.");try{startActivity(new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("https://github.com/ceramik/5W_KA4_Meter/releases")));}catch(Exception ignored){}}
+
     private final class MeterView extends View {
         private final Paint p=new Paint(3);
         private final RectF r=new RectF();
-        private final int LED=0xffff6544,LED_DIM=0xff38221c,INACTIVE=0xff303034,GREEN=0xff2fe06a;
+        private int LED=0xffff6544,LED_DIM=0xff38221c; private final int INACTIVE=0xff303034,GREEN=0xff2fe06a;
         private long lastAnim=-1;private float phase=0;
         MeterView(){super(MainActivity.this);setLayerType(View.LAYER_TYPE_SOFTWARE,null);}
         private void fill(Canvas c,float a,float b,float x,float y,int color){p.setColor(color);p.setStyle(Paint.Style.FILL);c.drawRect(a,b,x,y,p);}
@@ -90,14 +101,14 @@ public final class MainActivity extends Activity {
         private String time(float s){int v=(int)Math.max(0,s);return String.format(Locale.US,"%02d:%02d",v/60,v%60);}
         private String clock(long ms){long s=Math.max(0,ms)/1000;return String.format(Locale.US,"%d:%02d",s/60,s%60);}
         @Override public void onDraw(Canvas c){super.onDraw(c);
-            if(meter==null){c.drawColor(0xff14110e);return;} int save=c.save();c.scale(getWidth()/800f,getHeight()/480f);c.drawColor(0xff14110e);
+            if(meter==null){c.drawColor(0xff14110e);return;} int[] palette={0xffff6544,0xffffb020,0xff2fe06a,0xff58d9ff,0xffeeeeee,0xffc084fc};LED=palette[Math.max(0,Math.min(5,meter.theme))];LED_DIM=0xff000000|((LED&0xff0000)/8&0xff0000)|((LED&0xff00)/8&0xff00)|((LED&255)/8);int save=c.save();c.scale(getWidth()/800f,getHeight()/480f);c.drawColor(0xff14110e);
             float v=meter.speed.speed(SystemClock.elapsedRealtime());boolean moving=!Float.isNaN(v)&&v>0.5f;
             if(lastAnim>0&&meter.running&&moving)phase+=Math.min(500,SystemClock.elapsedRealtime()-lastAnim)/Math.max(40f,100-v);
             lastAnim=SystemClock.elapsedRealtime();int horseFrame=meter.running&&moving?(int)phase%HorseFrames.FRAMES.length:3;
             round(c,14,60,522,470,14,0xff1d1d20);round(c,22,68,514,462,10,0xff0c0c0d);
             text(c,"KOREA DIGITAL TAXIMETER",34,88,12,0xff5d5d63,Paint.Align.LEFT,true);
             text(c,REGIONS[meter.region]+" 요금 · "+meter.speed.source(SystemClock.elapsedRealtime())+(meter.outside?" · 시계외":""),502,88,12,0xffaaaaaa,Paint.Align.RIGHT,true);
-            String[] labs={"빈차","주행","할증","예약","호출"};boolean[] lamps={!meter.running,meter.running,meter.surcharge()>0,false,false};int[] colors={0xffff3b2f,GREEN,0xffffb020,0xff3fa2ff,0xffff3b2f};
+            String[] labs={"빈차","주행","할증","예약","호출"};boolean[] lamps={!meter.running,meter.running,meter.surcharge()>0,meter.reserved,meter.called};int[] colors={0xffff3b2f,GREEN,0xffffb020,0xff3fa2ff,0xffff3b2f};
             for(int i=0;i<5;i++){float x=34+i*94;round(c,x,98,x+84,128,5,lamps[i]?colors[i]:0xff1a1a1c);text(c,labs[i],x+42,119,16,lamps[i]?0xff111111:0xff4a4a50,Paint.Align.CENTER,true);}
             text(c,meter.zoneLabel()+" · 시계외 "+meter.modeLabel()+" · "+Math.round(meter.surcharge()*100)+"%",34,136,9,0xffaaaaaa,Paint.Align.LEFT,false);
             round(c,34,140,502,290,8,0xff220e0a);outline(c,34,140,502,290,8,0xff603529);
@@ -117,6 +128,7 @@ public final class MainActivity extends Activity {
             text(c,"심야 "+tariff.nightHours()+"시 최대 "+tariff.nightMax()+"% · 시계외 "+tariff.out+"%",282,438,12,0xff8a8a90,Paint.Align.LEFT,false);
             if(meter.ended)receipt(c,v);else radio(c);
             // Idle settings: tapping region name cycles area; long tapping region toggles city-outside flag.
+            int hour=Calendar.getInstance().get(Calendar.HOUR_OF_DAY);float level=meter.brightness/100f;if(meter.nightDim&&(hour>=20||hour<6))level*=0.55f;if(level<1)fill(c,0,0,800,480,((int)((1-level)*255))<<24);
             c.restoreToCount(save);
         }
         private void seg7(Canvas c,String value,float right,float top,float h,int on,int off){
@@ -184,8 +196,8 @@ public final class MainActivity extends Activity {
             TaxiTariff tf=meter.receiptFare.tariff();String[] labels={String.format(Locale.US,"기본요금 %.1f km",tf.baseM/1000f),"거리 "+tf.stepM+"m × "+meter.receiptFare.distUnits,"시간 "+tf.stepS+"초 × "+meter.receiptFare.timeUnits,"할증 (심야·시계외)"};
             int[] amounts={tf.base,meter.receiptFare.distWon,meter.receiptFare.timeWon,meter.receiptFare.surcharge()};
             for(int i=0;i<4;i++){text(c,labels[i],l+16,t+126+i*24,12,ink,Paint.Align.LEFT,false);mono(c,String.format(Locale.US,"%,d",amounts[i]),rr-16,t+126+i*24,13,ink,Paint.Align.RIGHT);}
-            fill(c,l+16,t+212,rr-16,t+214,ink);text(c,"합계",l+16,t+242,16,ink,Paint.Align.LEFT,true);text(c,String.format(Locale.US,"%,d원",meter.receiptFare.total()),rr-16,t+242,20,0xffb3261e,Paint.Align.RIGHT,true);
-            text(c,"운행 종료 · "+meter.receiptFare.tariff().region,l+16,t+268,12,soft,Paint.Align.LEFT,false);
+            fill(c,l+16,t+212,rr-16,t+214,ink);text(c,"합계",l+16,t+242,16,ink,Paint.Align.LEFT,true);text(c,String.format(Locale.US,"%,d원",meter.receiptFare.total()+meter.receiptToll),rr-16,t+242,20,0xffb3261e,Paint.Align.RIGHT,true);
+            text(c,"통행료 "+meter.receiptToll+"원 · 연료비 "+meter.receiptFuel+"원",l+16,t+268,12,soft,Paint.Align.LEFT,false);
             text(c,"현재 "+(Float.isNaN(v)?"—":String.format(Locale.US,"%.0f",v))+" km/h · "+meter.speed.source(SystemClock.elapsedRealtime()),l+16,t+288,12,soft,Paint.Align.LEFT,false);
             for(int i=0,x=(int)l+30;x<rr-30;i++){int bw=1+((i*7)%3);fill(c,x,t+310,x+bw,t+344,ink);x+=bw+1+((i*5)%2);}
             text(c,"누르면 음악으로",(l+rr)/2,t+370,12,soft,Paint.Align.CENTER,false);
@@ -199,6 +211,8 @@ public final class MainActivity extends Activity {
                 if(Build.VERSION.SDK_INT>=22)startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
             }}
             else if(x>=222&&x<=306&&y>=98&&y<=128){if(SystemClock.elapsedRealtime()-downAt>700)meter.setSurchargeMode(0);else meter.toggleSurcharge();}
+            else if(x>=316&&x<=400&&y>=98&&y<=128){meter.reserved=!meter.reserved;}
+            else if(x>=410&&x<=494&&y>=98&&y<=128){meter.called=!meter.called;}
             else if(y>=60&&y<=95){settings();}
             invalidate();return true;
         }

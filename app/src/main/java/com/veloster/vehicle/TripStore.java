@@ -1,0 +1,15 @@
+package com.veloster.vehicle;
+import android.content.*;
+import android.database.Cursor;
+import android.database.sqlite.*;
+import java.util.*;
+import java.text.SimpleDateFormat;
+final class TripStore extends SQLiteOpenHelper {
+    TripStore(Context c){super(c,"trips.db",null,1);}
+    public void onCreate(SQLiteDatabase d){d.execSQL("CREATE TABLE trips(id INTEGER PRIMARY KEY, started INTEGER NOT NULL, ended INTEGER NOT NULL, region TEXT, km REAL, seconds REAL, fare INTEGER, toll INTEGER, fuel INTEGER)");}
+    public void onUpgrade(SQLiteDatabase d,int a,int b){}
+    void add(long start,long end,String region,double km,float secs,int fare,int toll,int fuel){ContentValues v=new ContentValues();v.put("id",start);v.put("started",start);v.put("ended",end);v.put("region",region);v.put("km",km);v.put("seconds",secs);v.put("fare",fare);v.put("toll",toll);v.put("fuel",fuel);getWritableDatabase().insertWithOnConflict("trips",null,v,SQLiteDatabase.CONFLICT_IGNORE);}
+    String summary(int period){Calendar c=Calendar.getInstance();c.set(Calendar.HOUR_OF_DAY,0);c.set(Calendar.MINUTE,0);c.set(Calendar.SECOND,0);c.set(Calendar.MILLISECOND,0);if(period==1)c.add(Calendar.DAY_OF_MONTH,-((c.get(Calendar.DAY_OF_WEEK)+5)%7));if(period==2)c.set(Calendar.DAY_OF_MONTH,1);Cursor x=getReadableDatabase().rawQuery("SELECT count(*),coalesce(sum(km),0),coalesce(sum(seconds),0),coalesce(sum(fare),0),coalesce(sum(toll),0),coalesce(sum(fuel),0) FROM trips WHERE ended>=?",new String[]{Long.toString(c.getTimeInMillis())});try{x.moveToFirst();return String.format(Locale.KOREA,"운행 %d회\n거리 %.2f km\n운행 시간 %.1f분\n택시 요금 %,d원\n통행료 %,d원\n예상 연료비 %,d원",x.getInt(0),x.getDouble(1),x.getDouble(2)/60,x.getLong(3),x.getLong(4),x.getLong(5));}finally{x.close();}}
+    String recent(){Cursor x=getReadableDatabase().rawQuery("SELECT ended,region,km,fare,toll FROM trips ORDER BY ended DESC LIMIT 100",null);StringBuilder b=new StringBuilder();SimpleDateFormat f=new SimpleDateFormat("MM-dd HH:mm",Locale.KOREA);try{while(x.moveToNext())b.append(String.format(Locale.KOREA,"%s %s · %.2f km · %,d원\n",f.format(new Date(x.getLong(0))),x.getString(1),x.getDouble(2),x.getLong(3)+x.getLong(4)));}finally{x.close();}return b.length()==0?"기록 없음":b.toString();}
+    void csv(java.io.OutputStream out)throws java.io.IOException{java.io.Writer w=new java.io.OutputStreamWriter(out,"UTF-8");w.write("\ufeffstarted,ended,region,km,seconds,fare,toll,fuel\n");Cursor x=getReadableDatabase().rawQuery("SELECT started,ended,region,km,seconds,fare,toll,fuel FROM trips ORDER BY started",null);try{while(x.moveToNext()){for(int i=0;i<8;i++){if(i>0)w.write(",");w.write(x.getString(i));}w.write("\n");}w.flush();}finally{x.close();}}
+}
