@@ -63,14 +63,15 @@ public final class MainActivity extends Activity {
     }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] grants){super.onRequestPermissionsResult(request,permissions,grants);if(request==11&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED&&meter!=null)meter.requestGps();}
     private void settings(){if(meter==null)return;
-        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+(meter.outside?"ON":"OFF"),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기"};
+        String[] options={"지역 요금 선택 ("+REGIONS[meter.region]+")","시계외 할증: "+meter.modeLabel(),"자동 운행 시작: "+(meter.auto?"ON":"OFF"),"이전 영수증 보기","GPS 지역 자동 선택: "+(meter.autoRegion?"ON":"OFF") };
         new android.app.AlertDialog.Builder(this).setTitle("미터기 설정").setItems(options,(d,n)->{
             if(meter==null)return;
             if(n==0){if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();return;}
                 new android.app.AlertDialog.Builder(this).setTitle("지역 요금 선택").setSingleChoiceItems(REGIONS,meter.region,(dialog,r)->{if(meter!=null)meter.setRegion(r);dialog.dismiss();view.invalidate();}).setNegativeButton("취소",null).show();
-            }else if(n==1){meter.outside=!meter.outside;meter.saveSettings();}
+            }else if(n==1){new android.app.AlertDialog.Builder(this).setTitle("시계외 할증 (심야는 별도 자동)").setSingleChoiceItems(new String[]{"GPS 자동","수동 ON","수동 OFF"},meter.surchargeMode,(dialog,i)->{if(meter!=null)meter.setSurchargeMode(i);dialog.dismiss();view.invalidate();}).setNegativeButton("취소",null).show();}
             else if(n==2){meter.auto=!meter.auto;meter.saveSettings();}
-            else if(meter.hasReceipt){meter.ended=true;}else android.widget.Toast.makeText(this,"저장된 영수증 없음",0).show();
+            else if(n==3){if(meter.hasReceipt){meter.ended=true;}else android.widget.Toast.makeText(this,"저장된 영수증 없음",0).show();}
+            else if(meter.running){android.widget.Toast.makeText(this,"운행 종료 후 변경하세요",0).show();}else meter.setAutoRegion(!meter.autoRegion);
             view.invalidate();
         }).setNegativeButton("닫기",null).show();
     }
@@ -98,6 +99,7 @@ public final class MainActivity extends Activity {
             text(c,REGIONS[meter.region]+" 요금 · "+meter.speed.source(SystemClock.elapsedRealtime())+(meter.outside?" · 시계외":""),502,88,12,0xffaaaaaa,Paint.Align.RIGHT,true);
             String[] labs={"빈차","주행","할증","예약","호출"};boolean[] lamps={!meter.running,meter.running,meter.surcharge()>0,false,false};int[] colors={0xffff3b2f,GREEN,0xffffb020,0xff3fa2ff,0xffff3b2f};
             for(int i=0;i<5;i++){float x=34+i*94;round(c,x,98,x+84,128,5,lamps[i]?colors[i]:0xff1a1a1c);text(c,labs[i],x+42,119,16,lamps[i]?0xff111111:0xff4a4a50,Paint.Align.CENTER,true);}
+            text(c,meter.zoneLabel()+" · 시계외 "+meter.modeLabel()+" · "+Math.round(meter.surcharge()*100)+"%",34,136,9,0xffaaaaaa,Paint.Align.LEFT,false);
             round(c,34,140,502,290,8,0xff220e0a);outline(c,34,140,502,290,8,0xff603529);
             text(c,moving?"요금 · 주행":"요금 · 정차",46,162,13,0xffbd6c50,Paint.Align.LEFT,true);
             fill(c,44,174,154,240,0xff29110e);
@@ -196,6 +198,7 @@ public final class MainActivity extends Activity {
             else if(x>=538&&x<=784&&y>=64&&y<=452){if(meter.ended)meter.ended=false;else if(!music.has()&&!MusicMonitor.hasAccess(MainActivity.this)){
                 if(Build.VERSION.SDK_INT>=22)startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
             }}
+            else if(x>=222&&x<=306&&y>=98&&y<=128){if(SystemClock.elapsedRealtime()-downAt>700)meter.setSurchargeMode(0);else meter.toggleSurcharge();}
             else if(y>=60&&y<=95){settings();}
             invalidate();return true;
         }

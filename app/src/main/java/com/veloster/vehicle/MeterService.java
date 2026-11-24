@@ -9,7 +9,27 @@ public final class MeterService extends Service implements LocationListener {
     static final String[] REGIONS={"서울","경기","인천","부산","대구","광주","대전","울산","세종","강원","충북","충남","전북","전남","경북","경남","제주"};
     final SpeedArbiter speed=new SpeedArbiter();
     final TaxiFare fare=new TaxiFare(), receiptFare=new TaxiFare();
-    int region;
+    int region, surchargeMode=0, zone=-1, startZone=-1, pendingZone=-1, zoneCount=0;
+    boolean autoRegion=false, gpsOutside=false;
+    long zoneAt=-1, lastZoneSample=-1;
+    private static final int AUTO=0, FORCE_ON=1, FORCE_OFF=2;
+    boolean freshZone(){return zone>=0&&zoneAt>=0&&SystemClock.elapsedRealtime()-zoneAt<=4000;}
+    String modeLabel(){return surchargeMode==AUTO?"자동":surchargeMode==FORCE_ON?"수동 ON":"수동 OFF";}
+    String zoneLabel(){return zone<0?"GPS 지역 미확인":TaxiZones.name(zone)+(freshZone()?"":" (GPS 끊김)");}
+    void setSurchargeMode(int mode){surchargeMode=mode;updateOutside();saveSettings();refreshIdleFare();}
+    void toggleSurcharge(){setSurchargeMode(outside?FORCE_OFF:FORCE_ON);}
+    void updateOutside(){outside=surchargeMode==FORCE_ON||(surchargeMode==AUTO&&gpsOutside);}
+    void refreshIdleFare(){if(!running&&!ended){TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));}}
+    void setAutoRegion(boolean enabled){if(running)return;autoRegion=enabled;if(enabled&&freshZone())selectGpsRegion();saveSettings();refreshIdleFare();}
+    private void selectGpsRegion(){if(!autoRegion||running||zone<0)return;String name=TaxiZones.tariff(zone);for(int i=0;i<REGIONS.length;i++)if(REGIONS[i].equals(name)){if(region!=i){region=i;saveSettings();refreshIdleFare();}break;}}
+    private void place(Location loc){long now=SystemClock.elapsedRealtime();if(lastZoneSample>=0&&now-lastZoneSample<900)return;lastZoneSample=now;
+        if(loc.hasAccuracy()&&loc.getAccuracy()>150)return;
+        int z=TaxiZones.at(loc.getLatitude(),loc.getLongitude());if(z<0){pendingZone=-1;zoneCount=0;return;}
+        if(z==zone){zoneAt=now;pendingZone=-1;zoneCount=0;if(running&&startZone<0){startZone=z;gpsOutside=false;updateOutside();}else if(!running)selectGpsRegion();return;}
+        if(z!=pendingZone){pendingZone=z;zoneCount=1;}else zoneCount++;
+        if(zoneCount<3)return;zone=z;zoneAt=now;pendingZone=-1;zoneCount=0;
+        if(running){if(startZone<0)startZone=zone;gpsOutside=zone!=startZone;updateOutside();}else selectGpsRegion();
+    }
     boolean running,ended,waitStop,outside,auto=true,hasReceipt;
     double km,receiptKm; float secs,slowSecs,receiptSecs,receiptSlow;
     private SharedPreferences prefs;
@@ -28,7 +48,7 @@ public final class MeterService extends Service implements LocationListener {
     @Override public void onCreate(){super.onCreate();
         prefs=getSharedPreferences("meter",MODE_PRIVATE);
         region=Math.max(0,Math.min(REGIONS.length-1,prefs.getInt("region",0)));
-        outside=prefs.getBoolean("outside",false);auto=prefs.getBoolean("auto",true);
+        surchargeMode=prefs.getInt("surchargeMode",prefs.getBoolean("outside",false)?FORCE_ON:AUTO);if(surchargeMode<0||surchargeMode>2)surchargeMode=AUTO;autoRegion=prefs.getBoolean("autoRegion",false);auto=prefs.getBoolean("auto",true);updateOutside();
         TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));
         if(prefs.getBoolean("receipt",false)){
             receiptFare.restore(TaxiTariff.of(prefs.getString("receipt_region","서울")),prefs.getFloat("receipt_meters",0),prefs.getInt("receipt_du",0),prefs.getInt("receipt_tu",0),prefs.getInt("receipt_dw",0),prefs.getInt("receipt_tw",0),prefs.getFloat("receipt_won",0));
@@ -61,16 +81,16 @@ public final class MeterService extends Service implements LocationListener {
         handler.postDelayed(this,100);
     }};
     float surcharge(){return fare.tariff().surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside);}
-    void saveSettings(){prefs.edit().putInt("region",region).putBoolean("outside",outside).putBoolean("auto",auto).apply();}
-    void setRegion(int r){if(running)return;region=r;saveSettings();TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));km=0;secs=slowSecs=0;}
-    void startTrip(){TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));km=0;secs=slowSecs=0;running=true;ended=false;waitStop=false;lastTick=SystemClock.elapsedRealtime();}
-    void endTrip(){running=false;ended=true;waitStop=true;hasReceipt=true;receiptFare.copyFrom(fare);receiptKm=km;receiptSecs=secs;receiptSlow=slowSecs;prefs.edit().putBoolean("receipt",true).putString("receipt_region",fare.tariff().region).putFloat("receipt_meters",fare.savedMeters()).putInt("receipt_du",fare.distUnits).putInt("receipt_tu",fare.timeUnits).putInt("receipt_dw",fare.distWon).putInt("receipt_tw",fare.timeWon).putFloat("receipt_won",fare.savedWon()).putFloat("receipt_km",(float)km).putFloat("receipt_secs",secs).putFloat("receipt_slow",slowSecs).apply();}
-    @Override public void onLocationChanged(Location loc){if(loc==null)return;float k=Float.NaN;
+    void saveSettings(){prefs.edit().putInt("region",region).putBoolean("outside",outside).putInt("surchargeMode",surchargeMode).putBoolean("autoRegion",autoRegion).putBoolean("auto",auto).apply();}
+    void setRegion(int r){if(running)return;autoRegion=false;region=r;saveSettings();TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));km=0;secs=slowSecs=0;}
+    void startTrip(){if(autoRegion&&freshZone())selectGpsRegion();startZone=freshZone()?zone:-1;gpsOutside=false;updateOutside();TaxiTariff t=TaxiTariff.of(REGIONS[region]);fare.start(t,t.surcharge(Calendar.getInstance().get(Calendar.HOUR_OF_DAY),outside));km=0;secs=slowSecs=0;running=true;ended=false;waitStop=false;lastTick=SystemClock.elapsedRealtime();}
+    void endTrip(){running=false;ended=true;gpsOutside=false;updateOutside();waitStop=true;hasReceipt=true;receiptFare.copyFrom(fare);receiptKm=km;receiptSecs=secs;receiptSlow=slowSecs;prefs.edit().putBoolean("receipt",true).putString("receipt_region",fare.tariff().region).putFloat("receipt_meters",fare.savedMeters()).putInt("receipt_du",fare.distUnits).putInt("receipt_tu",fare.timeUnits).putInt("receipt_dw",fare.distWon).putInt("receipt_tw",fare.timeWon).putFloat("receipt_won",fare.savedWon()).putFloat("receipt_km",(float)km).putFloat("receipt_secs",secs).putFloat("receipt_slow",slowSecs).apply();}
+    @Override public void onLocationChanged(Location loc){if(loc==null)return;place(loc);float k=Float.NaN;
         if(loc.hasSpeed())k=Math.max(0,loc.getSpeed()*3.6f);
         else if(lastPosition!=null&&loc.getTime()>lastPosition.getTime()){long ms=loc.getTime()-lastPosition.getTime();if(ms>=500&&ms<=5000)k=lastPosition.distanceTo(loc)*3600f/ms;}
         if(!Float.isNaN(k))speed.gps(k,SystemClock.elapsedRealtime());lastPosition=loc;
     }
-    @Override public void onProviderDisabled(String n){speed.clearGps();}
+    @Override public void onProviderDisabled(String n){speed.clearGps();zoneAt=-1;pendingZone=-1;zoneCount=0;}
     @Override public void onProviderEnabled(String n){}
     @Override public void onStatusChanged(String n,int s,Bundle b){}
     @Override public void onDestroy(){handler.removeCallbacks(tick);if(gps!=null)gps.removeUpdates(this);unregisterReceiver(bridge);super.onDestroy();}
