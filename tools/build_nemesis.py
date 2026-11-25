@@ -77,8 +77,8 @@ export_log() {
 }
 begin_log() {
     umask 022
-    echo "TaxiMeter installer diagnostic 0.5.12: $1" > "$LOG" 2>/dev/null
-    report "TaxiMeter installer diagnostic 0.5.12: $1"
+    echo "TaxiMeter installer diagnostic 0.5.13: $1" > "$LOG" 2>/dev/null
+    report "TaxiMeter installer diagnostic 0.5.13: $1"
     report "UID: $(id 2>&1)"
     report "Android SDK: $(getprop ro.build.version.sdk)"
     report "Script: $0"
@@ -89,10 +89,19 @@ begin_log() {
 }
 find_apk() {
     APK=
-    for D in /data/local/tmp/nemesis/stage/$PKG /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG; do
-        if [ -s "$D/bin/TaxiMeter.apk" ]; then APK="$D/bin/TaxiMeter.apk"; report "APK: $APK"; return 0; fi
+    SCRIPT_DIR="${0%/*}"
+    for C in /data/nemesis/apps/hkg.taximeter/bin/TaxiMeter.apk "$SCRIPT_DIR/TaxiMeter.apk" "$SCRIPT_DIR/../bin/TaxiMeter.apk" /data/local/tmp/nemesis/stage/hkg.taximeter/bin/TaxiMeter.apk /data/nemesis/packages/hkg.taximeter/bin/TaxiMeter.apk; do
+        INFO="$(/system/bin/ls -l "$C" 2>&1)"
+        RC=$?
+        report "APK candidate: $C (ls exit=$RC)"
+        report "$INFO"
+        if ( : < "$C" ) 2>/dev/null; then
+            APK="$C"
+            report "APK opened: $APK"
+            return 0
+        fi
     done
-    report "TaxiMeter APK not found"; return 1
+    report "TaxiMeter APK not readable"; return 1
 }
 installed() {
     case "$(/system/bin/pm path "$APP" 2>/dev/null)" in package:*) return 0;; *) return 1;; esac
@@ -101,12 +110,16 @@ install_apk() {
     find_apk || return 1
     TMP=/data/local/tmp/taximeter-install.apk
     rm -f "$TMP"
-    cp "$APK" "$TMP" || return 1
-    chmod 644 "$TMP" || { rm -f "$TMP"; return 1; }
+    if ! /system/bin/cat "$APK" > "$TMP"; then report "APK copy failed"; rm -f "$TMP"; return 1; fi
+    chmod 644 "$TMP" || { report "chmod failed"; rm -f "$TMP"; return 1; }
     report "Source: $(ls -l "$APK" 2>&1)"
     report "Copy: $(ls -l "$TMP" 2>&1)"
     report "Source SHA256 expected: __APK_SHA256__"
-    if command -v cmp >/dev/null 2>&1; then cmp "$APK" "$TMP" && report "Copy compare: identical" || { report "Copy compare failed"; return 1; }; fi
+    if command -v cmp >/dev/null 2>&1; then
+        CMP_RESULT="$(cmp "$APK" "$TMP" 2>&1)"; CMP_RC=$?
+        report "Copy compare exit=$CMP_RC: $CMP_RESULT"
+        case "$CMP_RC" in 0) report "Copy compare: identical";; 1) report "Copy differs; stopping"; return 1;; *) report "cmp unavailable or failed; integrity not independently checked";; esac
+    fi
     if command -v sha256sum >/dev/null 2>&1; then report "$(sha256sum "$APK" "$TMP")"; elif command -v busybox >/dev/null 2>&1; then report "$(busybox sha256sum "$APK" "$TMP" 2>&1)"; fi
     RESULT="$(/system/bin/pm install -r "$TMP" 2>&1)"
     STATUS=$?
