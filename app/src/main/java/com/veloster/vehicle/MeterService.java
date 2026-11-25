@@ -11,7 +11,7 @@ public final class MeterService extends Service implements LocationListener {
     final Gen5wSpeedReader bcm=new Gen5wSpeedReader();
     private final java.util.concurrent.ScheduledExecutorService bcmWorker=java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
     private volatile boolean destroyed;
-    private void startBcm(){bcmWorker.scheduleWithFixedDelay(()->{if(destroyed)return;float v=bcm.read();long at=SystemClock.elapsedRealtime();if(!Float.isNaN(v))handler.post(()->{if(!destroyed)speed.bcm(v,at);});},0,500,java.util.concurrent.TimeUnit.MILLISECONDS);}
+    private void startBcm(){bcmWorker.scheduleWithFixedDelay(()->{if(destroyed)return;float v=bcm.read();long at=SystemClock.elapsedRealtime();handler.post(()->{if(!destroyed)speed.bcm(v,at);});},0,500,java.util.concurrent.TimeUnit.MILLISECONDS);}
     final TaxiFare fare=new TaxiFare(), receiptFare=new TaxiFare();
     int region, surchargeMode=0, zone=-1, startZone=-1, pendingZone=-1, zoneCount=0;
     boolean autoRegion=false, gpsOutside=false;
@@ -55,6 +55,7 @@ public final class MeterService extends Service implements LocationListener {
     void restoreActive(){if(!prefs.getBoolean("active",false))return;fare.restore(TaxiTariff.of(prefs.getString("active_region","서울")),prefs.getFloat("active_m",0),prefs.getInt("active_du",0),prefs.getInt("active_tu",0),prefs.getInt("active_dw",0),prefs.getInt("active_tw",0),prefs.getFloat("active_w",0));fare.restoreTimeRemainder(prefs.getFloat("active_time_remainder",0));started=prefs.getLong("active_start",System.currentTimeMillis());km=prefs.getFloat("active_km",0);secs=prefs.getFloat("active_sec",0);slowSecs=prefs.getFloat("active_slow",0);startZone=prefs.getInt("active_zone",-1);gpsOutside=prefs.getBoolean("active_out",false);toll=prefs.getInt("active_toll",0);maxSpeed=prefs.getFloat("active_max_speed",Float.NaN);speedSources=prefs.getInt("active_speed_sources",0);running=true;ended=false;waitStop=false;updateOutside();}
     String[] diagnosticRows(){long n=SystemClock.elapsedRealtime();return new String[]{
         "차속 소스: "+speed.source(n),
+        "우선순위: GPS → 5W BCM → 외부 차속",
         "5W BCM: "+speed.bcmReading(n)+" / "+bcm.status,
         "외부 차속: "+speed.vehicleReading(n),
         "GPS 차속: "+speed.gpsReading(n),
@@ -104,7 +105,7 @@ public final class MeterService extends Service implements LocationListener {
         nb.setSmallIcon(android.R.drawable.ic_menu_compass).setContentTitle("5W 택시 미터기").setContentText("차속 수신 및 운행 적산").setContentIntent(pi).setOngoing(true).addAction(android.R.drawable.ic_menu_close_clear_cancel,"운행 종료 및 서비스 중지",stop);
         startForeground(41,nb.build());requestGps();return START_NOT_STICKY;
     }
-    void requestGps(){try{if(gps!=null){gps.removeUpdates(this);lastPosition=null;gps.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,0,this);}}catch(SecurityException|IllegalArgumentException ignored){}}
+    void requestGps(){try{if(gps!=null){gps.removeUpdates(this);lastPosition=null;speed.clearGps();gps.requestLocationUpdates(LocationManager.GPS_PROVIDER,1000,0,this);}}catch(SecurityException|IllegalArgumentException ignored){speed.clearGps();lastPosition=null;}}
     private final Runnable tick=new Runnable(){public void run(){
         long now=SystemClock.elapsedRealtime();float v=speed.speed(now);
         float dt=Math.max(0,Math.min((now-lastTick)/1000f,1.5f));lastTick=now;
@@ -122,10 +123,10 @@ public final class MeterService extends Service implements LocationListener {
     void endTrip(){if(!running)return;long now=SystemClock.elapsedRealtime();receiptEndSpeed=speed.speed(now);receiptEndSource=speed.source(now);if(!Float.isNaN(receiptEndSpeed)){maxSpeed=Float.isNaN(maxSpeed)?receiptEndSpeed:Math.max(maxSpeed,receiptEndSpeed);speedSources|=sourceBit(receiptEndSource);}receiptMax=maxSpeed;receiptSources=speedSources;receiptToll=toll;receiptFuel=fuel(km);trips.add(started,System.currentTimeMillis(),fare.tariff().region,km,secs,fare.total(),toll,receiptFuel,averageSpeed(),receiptMax,receiptEndSpeed,receiptEndSource,sourceList(receiptSources));running=false;ended=true;gpsOutside=false;updateOutside();waitStop=true;hasReceipt=true;receiptFare.copyFrom(fare);receiptKm=km;receiptSecs=secs;receiptSlow=slowSecs;prefs.edit().putBoolean("active",false).putFloat("receipt_max_speed",receiptMax).putFloat("receipt_end_speed",receiptEndSpeed).putInt("receipt_speed_sources",receiptSources).putString("receipt_end_source",receiptEndSource).putInt("receipt_toll",receiptToll).putInt("receipt_fuel",receiptFuel).putBoolean("receipt",true).putString("receipt_region",fare.tariff().region).putFloat("receipt_meters",fare.savedMeters()).putInt("receipt_du",fare.distUnits).putInt("receipt_tu",fare.timeUnits).putInt("receipt_dw",fare.distWon).putInt("receipt_tw",fare.timeWon).putFloat("receipt_won",fare.savedWon()).putFloat("receipt_km",(float)km).putFloat("receipt_secs",secs).putFloat("receipt_slow",slowSecs).apply();}
     @Override public void onLocationChanged(Location loc){if(loc==null)return;long now=SystemClock.elapsedRealtime();long fix=loc.getElapsedRealtimeNanos()/1000000L;if(fix<=0||fix>now||now-fix>SpeedArbiter.GPS_TIMEOUT_MS)return;accuracy=loc.hasAccuracy()?loc.getAccuracy():Float.NaN;place(loc);if(loc.hasAccuracy()&&loc.getAccuracy()>50){speed.clearGps();lastPosition=null;return;}float k=Float.NaN;
         if(loc.hasSpeed())k=Math.max(0,loc.getSpeed()*3.6f);
-        else if(lastPosition!=null&&loc.getTime()>lastPosition.getTime()){long ms=loc.getTime()-lastPosition.getTime();if(ms>=500&&ms<=5000)k=lastPosition.distanceTo(loc)*3600f/ms;}
-        if(!Float.isNaN(k))speed.gps(k,fix);lastPosition=loc;
+        else if(lastPosition!=null){long ms=(loc.getElapsedRealtimeNanos()-lastPosition.getElapsedRealtimeNanos())/1000000L;if(ms>=500&&ms<=4000)k=lastPosition.distanceTo(loc)*3600f/ms;}
+        speed.gps(k,fix);lastPosition=loc;
     }
-    @Override public void onProviderDisabled(String n){speed.clearGps();zoneAt=-1;pendingZone=-1;zoneCount=0;}
+    @Override public void onProviderDisabled(String n){speed.clearGps();lastPosition=null;zoneAt=-1;pendingZone=-1;zoneCount=0;}
     @Override public void onProviderEnabled(String n){}
     @Override public void onStatusChanged(String n,int s,Bundle b){}
     @Override public void onDestroy(){destroyed=true;bcmWorker.shutdownNow();saveActive();if(trips!=null)trips.close();handler.removeCallbacks(tick);if(gps!=null)gps.removeUpdates(this);unregisterReceiver(bridge);super.onDestroy();}
