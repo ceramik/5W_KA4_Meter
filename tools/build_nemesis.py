@@ -43,7 +43,7 @@ def build(apk, version, output):
     with zipfile.ZipFile(apk) as z:
         if not {"AndroidManifest.xml", "classes.dex"} <= set(z.namelist()) or z.testzip():
             raise ValueError("Invalid APK contents")
-    meta = f"[nemesis]\nversion={version}\nid={PACKAGE}\nname=5W TaxiMeter\ntypes=application\npostinstall=scripts/post.sh\npreuninstall=scripts/preun.sh\n\n[app.0]\nkind=sh\npath=bin/launch.sh\nuid=root\n"
+    meta = f"[nemesis]\nversion={version}\nid={PACKAGE}\nname=5W TaxiMeter\ntypes=application\npostinstall=scripts/post.sh\npreuninstall=scripts/preun.sh\n\n[app.0]\nkind=sh\npath=bin/launch.sh\nuid=root\n\n[app.1]\nkind=sh\npath=bin/diagnose.sh\nuid=root\n"
     common = """#!/system/bin/sh
 export PATH=/data/nemesis/bin:/sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin
 export ANDROID_ROOT=/system
@@ -54,15 +54,44 @@ export LD_LIBRARY_PATH=/vendor/lib:/system/lib
 PKG=hkg.taximeter
 APP=me.bamtol.ka4taximeter
 LOG=/data/local/tmp/taximeter-install.log
-for U in /storage/usb0 /mnt/media_rw/usb0 /storage/usb1 /mnt/usb0; do
-    if [ -d "$U" ] && grep " $U " /proc/mounts >/dev/null 2>&1 && [ -w "$U" ]; then LOG="$U/taximeter-install.log"; break; fi
-done
+# Always keep an internal log; USB is an additional best-effort copy.
+report() {
+    echo "$*"
+    echo "$*" >> "$LOG" 2>/dev/null
+}
+export_log() {
+    for U in /storage/usb* /mnt/media_rw/usb* /mnt/usb* /media/usb* /run/media/* /storage/USB* /mnt/USB*; do
+        [ -d "$U" ] || continue
+        [ -w "$U" ] || continue
+        # Permit mounted filesystems and aliases only, not empty mountpoint directories.
+        grep " $U " /proc/mounts >/dev/null 2>&1 || {
+            REAL="$(readlink -f "$U" 2>/dev/null)"
+            [ -n "$REAL" ] && grep " $REAL " /proc/mounts >/dev/null 2>&1 || continue
+        }
+        if cp "$LOG" "$U/taximeter-install.log" 2>/dev/null; then
+            sync
+            echo "USB log: $U/taximeter-install.log"
+        fi
+    done
+}
+begin_log() {
+    umask 022
+    echo "TaxiMeter installer diagnostic 0.5.10: $1" > "$LOG" 2>/dev/null
+    report "TaxiMeter installer diagnostic 0.5.10: $1"
+    report "UID: $(id 2>&1)"
+    report "Android SDK: $(getprop ro.build.version.sdk)"
+    report "Script: $0"
+    report "pm: $(ls -l /system/bin/pm 2>&1)"
+    report "pm path: $(/system/bin/pm path "$APP" 2>&1)"
+    report "Mounts: $(cat /proc/mounts 2>/dev/null)"
+    trap 'export_log' EXIT
+}
 find_apk() {
     APK=
     for D in /data/local/tmp/nemesis/stage/$PKG /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG; do
-        if [ -s "$D/bin/TaxiMeter.apk" ]; then APK="$D/bin/TaxiMeter.apk"; return 0; fi
+        if [ -s "$D/bin/TaxiMeter.apk" ]; then APK="$D/bin/TaxiMeter.apk"; report "APK: $APK"; return 0; fi
     done
-    echo "TaxiMeter APK not found"; return 1
+    report "TaxiMeter APK not found"; return 1
 }
 installed() {
     case "$(/system/bin/pm path "$APP" 2>/dev/null)" in package:*) return 0;; *) return 1;; esac
@@ -76,15 +105,14 @@ install_apk() {
     RESULT="$(/system/bin/pm install -r "$TMP" 2>&1)"
     STATUS=$?
     rm -f "$TMP"
-    echo "$RESULT"
-    echo "$RESULT" >> "$LOG"
+    report "pm install exit=$STATUS: $RESULT"
     [ "$STATUS" = 0 ] || return 1
     case "$RESULT" in *Success*) ;; *) return 1;; esac
     installed || { echo "APK not registered after install"; return 1; }
 }
 """
     post = common + """umask 022
-echo "TaxiMeter postinstall $(date)" > "$LOG"
+begin_log postinstall
 if ! install_apk; then
     echo "APK installation failed; see $LOG"
     exit 1
@@ -124,19 +152,34 @@ else
 fi
 exit 0
 """
-    launch = common + """umask 022
+    launch = common + """begin_log launch
 if ! installed; then
     echo "APK missing; attempting recovery"
     install_apk || { echo "Installation failed; see $LOG"; exit 1; }
 fi
 RESULT="$(/system/bin/am start -n "$APP/com.veloster.vehicle.MainActivity" 2>&1)"
-echo "$RESULT"
-echo "$RESULT" >> "$LOG"
+report "am start: $RESULT"
 case "$RESULT" in *"Error type 3"*|*"does not exist"*)
     echo "Activity missing; retrying package installation"
     install_apk || exit 1
     /system/bin/am start -n "$APP/com.veloster.vehicle.MainActivity"
     ;; esac
+"""
+    diagnose = common + """begin_log manual
+report "Package directories:"
+for D in /data/local/tmp/nemesis/stage/$PKG /data/nemesis/apps/$PKG /data/nemesis/packages/$PKG; do
+    report "$(ls -ld "$D" "$D/bin" "$D/bin/TaxiMeter.apk" 2>&1)"
+done
+report "HMG-API: $(ls -l /system/framework/hmgapi-hook.jar 2>&1)"
+report "Package manager: $(/system/bin/pm list packages "$APP" 2>&1)"
+report "Attempting install without deleting data"
+if install_apk; then
+    report "APK install verified"
+    report "Activity: $(/system/bin/am start -n "$APP/com.veloster.vehicle.MainActivity" 2>&1)"
+else
+    report "APK installation failed"
+fi
+report "Internal log: $LOG"
 """
     preun = common + """# Keep the Android APK and all data: this hook can also run before upgrades.
 # Explicit Android uninstall is a separate user action.
@@ -161,7 +204,7 @@ exit 0
     icons={"icon.png":tile((57,42,29),(255,101,68)),"icon_night.png":tile((25,22,22),(255,101,68)),"icon_disabled.png":tile((72,72,72),(162,162,162)),"icon_disabled_night.png":tile((30,30,30),(112,112,112))}
     inner = io.BytesIO()
     with zipfile.ZipFile(inner,"w") as z:
-        for name, content in {"NEMESIS.data":meta,"scripts/post.sh":post,"scripts/preun.sh":preun,"bin/launch.sh":launch,"bin/TaxiMeter.apk":apk.read_bytes()}.items():
+        for name, content in {"NEMESIS.data":meta,"scripts/post.sh":post,"scripts/preun.sh":preun,"bin/launch.sh":launch,"bin/diagnose.sh":diagnose,"bin/TaxiMeter.apk":apk.read_bytes()}.items():
             put(z,name,content)
         put(z,"hmgapi_mod/mod.json",json.dumps(mod,ensure_ascii=False,indent=2))
         for name,data in icons.items(): put(z,"hmgapi_mod/"+name,data)
