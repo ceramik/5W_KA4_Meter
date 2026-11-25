@@ -4,10 +4,10 @@ android {
     compileSdk 34
     defaultConfig {
         applicationId 'me.bamtol.ka4taximeter'
-        minSdk 17
+        minSdk 19
         targetSdk 24
-        versionCode 20
-        versionName '0.5.13'
+        versionCode 21
+        versionName '0.5.14'
     }
     signingConfigs {
         if (System.getenv("METER_KEYSTORE")) {
@@ -17,8 +17,8 @@ android {
                 keyAlias System.getenv("METER_KEY_ALIAS")
                 keyPassword System.getenv("METER_KEY_PASSWORD")
                 enableV1Signing true
-                enableV2Signing false
-                enableV3Signing false
+                enableV2Signing true
+                enableV3Signing true
                 enableV4Signing false
             }
         }

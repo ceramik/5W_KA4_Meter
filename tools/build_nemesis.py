@@ -77,8 +77,8 @@ export_log() {
 }
 begin_log() {
     umask 022
-    echo "TaxiMeter installer diagnostic 0.5.13: $1" > "$LOG" 2>/dev/null
-    report "TaxiMeter installer diagnostic 0.5.13: $1"
+    echo "TaxiMeter installer diagnostic 0.5.14: $1" > "$LOG" 2>/dev/null
+    report "TaxiMeter installer diagnostic 0.5.14: $1"
     report "UID: $(id 2>&1)"
     report "Android SDK: $(getprop ro.build.version.sdk)"
     report "Script: $0"

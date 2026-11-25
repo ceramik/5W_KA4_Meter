@@ -76,14 +76,18 @@ jobs:
           SRC=app/build/outputs/apk/debug/app-debug.apk
           OUT=dist/KA4_NEMESIS_TaxiMeter.apk
           if [ -n "$METER_KEYSTORE" ]; then
-            python3 -c 'import sys,zipfile; a,b=sys.argv[1:]; z=zipfile.ZipFile(a); o=zipfile.ZipFile(b,"w"); [(o.writestr(i,z.read(i))) for i in z.infolist() if not i.filename.upper().startswith("META-INF/") and not i.filename.endswith("/")]; o.close(); z.close()' "$SRC" "$RUNNER_TEMP/meter-unsigned.apk"
+            python3 -c 'import sys,zipfile; a,b=sys.argv[1:]; z=zipfile.ZipFile(a); o=zipfile.ZipFile(b,"w"); [(o.writestr(i,z.read(i))) for i in sorted(z.infolist(),key=lambda i: {"AndroidManifest.xml":0,"resources.arsc":1,"classes.dex":2}.get(i.filename,3)) if not i.filename.upper().startswith("META-INF/") and not i.filename.endswith("/")]; o.close(); z.close()' "$SRC" "$RUNNER_TEMP/meter-unsigned.apk"
             "$BT/zipalign" -f 4 "$RUNNER_TEMP/meter-unsigned.apk" "$RUNNER_TEMP/meter-aligned.apk"
-            "$BT/apksigner" sign --ks "$METER_KEYSTORE" --ks-key-alias "$METER_KEY_ALIAS" --ks-pass env:METER_STORE_PASSWORD --key-pass env:METER_KEY_PASSWORD --min-sdk-version 17 --v1-signing-enabled true --v2-signing-enabled false --v3-signing-enabled false --v4-signing-enabled false --out "$OUT" "$RUNNER_TEMP/meter-aligned.apk"
+            "$BT/apksigner" sign --ks "$METER_KEYSTORE" --ks-key-alias "$METER_KEY_ALIAS" --ks-pass env:METER_STORE_PASSWORD --key-pass env:METER_KEY_PASSWORD --min-sdk-version 19 --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --v4-signing-enabled false --out "$OUT" "$RUNNER_TEMP/meter-aligned.apk"
           else
             cp "$SRC" "$OUT"
           fi
           "$BT/apksigner" verify --verbose --print-certs --min-sdk-version 19 --max-sdk-version 19 "$OUT"
           "$BT/aapt" dump badging "$OUT" | head -20
+          "$BT/apksigner" verify --verbose --min-sdk-version 19 "$OUT"
+          unzip -p "$OUT" META-INF/MANIFEST.MF | grep -q "^SHA-256-Digest:"
+          LC_ALL=C jarsigner -verify "$OUT" | tee "$RUNNER_TEMP/jar-verify.txt"
+          grep -q "jar verified" "$RUNNER_TEMP/jar-verify.txt"
           sha256sum "$OUT"
           unzip -p "$OUT" META-INF/MANIFEST.MF | head -12
           unzip -p "$OUT" "META-INF/*.RSA" | openssl pkcs7 -inform DER -print_certs -text -noout | grep -E "Signature Algorithm|Public Key Algorithm" || true
