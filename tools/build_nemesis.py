@@ -76,8 +76,8 @@ export_log() {
 }
 begin_log() {
     umask 022
-    echo "TaxiMeter installer diagnostic 0.5.10: $1" > "$LOG" 2>/dev/null
-    report "TaxiMeter installer diagnostic 0.5.10: $1"
+    echo "TaxiMeter installer diagnostic 0.5.11: $1" > "$LOG" 2>/dev/null
+    report "TaxiMeter installer diagnostic 0.5.11: $1"
     report "UID: $(id 2>&1)"
     report "Android SDK: $(getprop ro.build.version.sdk)"
     report "Script: $0"
@@ -102,10 +102,15 @@ install_apk() {
     rm -f "$TMP"
     cp "$APK" "$TMP" || return 1
     chmod 644 "$TMP" || { rm -f "$TMP"; return 1; }
+    report "Source bytes: $(wc -c < "$APK") / copied bytes: $(wc -c < "$TMP")"
+    if command -v sha256sum >/dev/null 2>&1; then report "$(sha256sum "$APK" "$TMP")"; elif command -v busybox >/dev/null 2>&1; then report "$(busybox sha256sum "$APK" "$TMP" 2>&1)"; fi
     RESULT="$(/system/bin/pm install -r "$TMP" 2>&1)"
     STATUS=$?
     rm -f "$TMP"
     report "pm install exit=$STATUS: $RESULT"
+    report "PackageParser diagnostics:"
+    /system/bin/logcat -d -t 250 -v brief 2>/dev/null | grep -iE "PackageParser|PackageManager|certificate|taximeter" >> "$LOG"
+    /system/bin/logcat -d -t 250 -v brief 2>/dev/null | grep -iE "PackageParser|certificate" | tail -20
     [ "$STATUS" = 0 ] || return 1
     case "$RESULT" in *Success*) ;; *) return 1;; esac
     installed || { echo "APK not registered after install"; return 1; }

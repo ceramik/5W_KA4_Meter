@@ -66,9 +66,25 @@ jobs:
         run: gradle --no-daemon :app:assembleDebug
 
       - name: Prepare APK
+        env:
+          METER_STORE_PASSWORD: ${{ secrets.METER_STORE_PASSWORD }}
+          METER_KEY_ALIAS: ${{ secrets.METER_KEY_ALIAS }}
+          METER_KEY_PASSWORD: ${{ secrets.METER_KEY_PASSWORD }}
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/KA4_NEMESIS_TaxiMeter.apk
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          SRC=app/build/outputs/apk/debug/app-debug.apk
+          OUT=dist/KA4_NEMESIS_TaxiMeter.apk
+          if [ -n "$METER_KEYSTORE" ]; then
+            python3 -c 'import sys,zipfile; a,b=sys.argv[1:]; z=zipfile.ZipFile(a); o=zipfile.ZipFile(b,"w"); [(o.writestr(i,z.read(i))) for i in z.infolist() if not i.filename.upper().startswith("META-INF/")]; o.close(); z.close()' "$SRC" "$RUNNER_TEMP/meter-unsigned.apk"
+            "$BT/zipalign" -f 4 "$RUNNER_TEMP/meter-unsigned.apk" "$RUNNER_TEMP/meter-aligned.apk"
+            "$BT/apksigner" sign --ks "$METER_KEYSTORE" --ks-key-alias "$METER_KEY_ALIAS" --ks-pass env:METER_STORE_PASSWORD --key-pass env:METER_KEY_PASSWORD --min-sdk-version 19 --v1-signing-enabled true --v2-signing-enabled false --v3-signing-enabled false --v4-signing-enabled false --out "$OUT" "$RUNNER_TEMP/meter-aligned.apk"
+          else
+            cp "$SRC" "$OUT"
+          fi
+          "$BT/apksigner" verify --verbose --print-certs --min-sdk-version 19 --max-sdk-version 19 "$OUT"
+          "$BT/aapt" dump badging "$OUT" | head -20
+          sha256sum "$OUT"
 
       - name: Build NEMESIS USB package
         env:
